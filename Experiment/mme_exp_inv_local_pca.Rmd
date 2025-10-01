@@ -1,0 +1,282 @@
+---
+title: "Local PCA of Inversions in Experimental Populations for Inversion Typing"
+output: html_notebook
+author: J. Rick
+---
+
+For each of the inversions on chr11, chr18, and chr24, I'm going to run a bash script with the following code to subset the region of interest and then run `PCAngsd`:
+
+```{sh}
+#!/bin/sh
+
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --job-name=local_pca
+#SBATCH --partition=short
+#SBATCH --mem=50G
+#SBATCH --time=2:00:00
+#SBATCH --output=local_pca_%A.log
+
+/programs/bin/labutils/mount_server cbsubscb16 /storage
+PATH=$PATH:/programs/pcangsd-1.10/
+
+reg_file=$1
+
+for reg in `cat $reg_file`; 
+  do echo "working with $reg"
+  base=`echo $reg | sed 's/\:/\_/g'`
+  echo "base is $base"
+  
+  if [ -f all_exp_bamlist_${base}.beagle.gz ]; then
+          echo "beagle already exists, moving on to pcangsd"
+  else
+          echo "beagle file not found; creating now"
+          /programs/angsd-0.940/angsd \
+            -bam /fs/cbsubscb16/storage/jrick/mme_exp_analyses/bam/all_bamlist_MixupsRemoved_expOnly \
+            -doMajorMinor 3 \
+            -minQ 20 -GL 2 \
+            -doMaf 1 \
+            -doCounts 1 \
+            -sites /fs/cbsubscb16/storage/jrick/mme_exp_analyses/angsd/global_snp_list_all_bamlist_MixupsRemoved_expOnly_mindp123_maxdp1460_minind186_minq20.txt \
+            -minMaf 0.01 \
+            -out all_exp_bamlist_$base \
+            -r $reg \
+            -fai /fs/cbsubscb16/storage/jrick/mme_exp_analyses/reference/Mmenidia_refgenome_anchored_all_renamed_v2.fasta.fai \
+            -P 8 \
+            -doGLF 2
+  fi
+  
+  pcangsd -b all_exp_bamlist_${base}.beagle.gz -o all_exp_bamlist_pcangsd_${base} -t 8 --dosage_save
+
+done
+```
+
+In this code, the region file ("reg_file") is just a list of the regions of interest:
+
+* Mme_chr11:2687108-11314977
+* Mme_chr18:791056-1607828
+* Mme_chr18:1607828-4345655
+* Mme_chr18:4345655-8508524
+* Mme_chr18:8508524-10353844
+* Mme_chr24:3381966-12760364
+* Mme_chr24:12760364-15714042
+
+From here, I can then import the covariance matrices produced and perform PCA on them in R.
+
+```{r inv-all-pcangsd}
+# note for others: the pcangsd directory can be found at
+# /fs/cbsubscb16/storage/jrick/mme_exp_analyses/pcangsd/
+
+inds <- read.table("bam/all_bamlist_MixupsRemoved_expOnly",header=FALSE) %>% 
+  mutate(ind_id = case_when(!grepl("merged",V1) ~ gsub(".*/bam/(.*)_Nextera.*","\\1",V1),
+                            grepl("merged",V1) ~ gsub(".*/bam/(.*)_merged.*","\\1",V1)),
+         pop = gsub("(.*)_[0-9]+","\\1",ind_id))
+
+## inv8
+# inv8_covMat <- as.matrix(read.table("pcangsd/all_exp_bamlist_pcangsd_Mme_chr08_2749823-15212861.cov",header=FALSE))
+# 
+# inv8_pca <- eigen(inv8_covMat)
+# 
+# plot(inv8_pca$vectors[,1:2],lwd=2,ylab="PC 2",xlab="PC 1",col=cols[as.factor(inds$pop)]
+#      ,main="linkage map inv8",pch=16)
+
+## inv11
+inv11_covMat <- as.matrix(read.table("pcangsd/all_exp_bamlist_pcangsd_Mme_chr11_2687108-11314977.cov",header=FALSE))
+
+inv11_pca <- eigen(inv11_covMat)
+
+plot(inv11_pca$vectors[,1:2],lwd=2,ylab="PC 2",xlab="PC 1",col=exp_colors_RGen0[as.factor(inds$pop)]
+     ,main="linkage map inv11 (2687108-11314977)",pch=16)
+
+## inv18-1
+inv18.1_covMat <- as.matrix(read.table("pcangsd/all_exp_bamlist_pcangsd_Mme_chr18_791056-1607828.cov",header=FALSE))
+
+inv18.1_pca <- eigen(inv18.1_covMat)
+
+plot(inv18.1_pca$vectors[,1:2],lwd=2,ylab="PC 2",xlab="PC 1",col=exp_colors_RGen0[as.factor(inds$pop)]
+     ,main="linkage map inv18-1 (791056-1607828)",pch=16)
+
+## inv18-2
+inv18.2_covMat <- as.matrix(read.table("pcangsd/all_exp_bamlist_pcangsd_Mme_chr18_1607828-4345655.cov",header=FALSE))
+
+inv18.2_pca <- eigen(inv18.2_covMat)
+
+plot(inv18.2_pca$vectors[,1:2],lwd=2,ylab="PC 2",xlab="PC 1",col=exp_colors_RGen0[as.factor(inds$pop)]
+     ,main="linkage map inv18-2 (1607828-4345655)",pch=16)
+
+## inv18-3
+inv18.3_covMat <- as.matrix(read.table("pcangsd/all_exp_bamlist_pcangsd_Mme_chr18_8508524-10353844.cov",header=FALSE))
+
+inv18.3_pca <- eigen(inv18.3_covMat)
+
+plot(inv18.3_pca$vectors[,1:2],lwd=2,ylab="PC 2",xlab="PC 1",col=exp_colors_RGen0[as.factor(inds$pop)]
+     ,main="linkage map inv18-3 (8508524-10353844)",pch=16)
+
+## inv24-1
+inv24.1_covMat <- as.matrix(read.table("pcangsd/all_exp_bamlist_pcangsd_Mme_chr24_3381966-12760364.cov",header=FALSE))
+
+inv24.1_pca <- eigen(inv24.1_covMat)
+
+plot(inv24.1_pca$vectors[,1:2],lwd=2,ylab="PC 2",xlab="PC 1",col=exp_colors_RGen0[as.factor(inds$pop)]
+     ,main="linkage map inv24-1 (3381966-12760364)",pch=16)
+
+## inv24-2
+inv24.2_covMat <- as.matrix(read.table("pcangsd/all_exp_bamlist_pcangsd_Mme_chr24_12760364-15714042.cov",header=FALSE))
+
+inv24.2_pca <- eigen(inv24.2_covMat)
+
+plot(inv24.2_pca$vectors[,1:2],lwd=2,ylab="PC 2",xlab="PC 1",col=exp_colors_RGen0[as.factor(inds$pop)]
+     ,main="linkage map inv24-2 (12760364-15714042)",pch=16)
+
+legend("topleft",legend=levels(as.factor(inds$pop)),col=exp_colors_RGen0,fill=exp_colors_RGen0)
+```
+
+# assigning inversion types
+
+I'm going to assign groups for inv11, inv18-1, inv18-2, and inv24-1 and see how these inversion types compare to length in the experiment fish.
+
+```{r inversion-typing}
+
+########
+# import length data
+lengths <- read_table("D_PolygenicDosage_beagle_Top0.DiffStat_2.txt") %>%
+  select(SampleID,Population,STD_Length,Total_Length,Weight)
+
+# compile pcs for all inversions, and then assign cutoffs to karyotype each
+inds_inv_gts <- inds %>%
+  left_join(lengths,by=c("ind_id" = "SampleID","pop" = "Population")) %>%
+  add_column(inv11_pc1 = inv11_pca$vectors[,1],
+             inv11_pc2 = inv11_pca$vectors[,2],
+             inv18.1_pc1 = inv18.1_pca$vectors[,1],
+             inv18.1_pc2 = inv18.1_pca$vectors[,2],
+             inv18.2_pc1 = inv18.2_pca$vectors[,1],
+             inv18.2_pc2 = inv18.2_pca$vectors[,2],
+             inv18.3_pc1 = inv18.3_pca$vectors[,1],
+             inv18.3_pc2 = inv18.3_pca$vectors[,2],
+             inv24.1_pc1 = inv24.1_pca$vectors[,1],
+             inv24.1_pc2 = inv24.1_pca$vectors[,2]) %>%
+  mutate(inv11_gt = case_when(inv11_pc1 > 0 ~ "SS", # cutoff values visually pulled from PCAs
+                              inv11_pc1 < 0 & inv11_pc1 > -0.1 ~ "SN", 
+                              inv11_pc1 < -0.1 ~ "NN"), # polarizing of N vs S done by looking at MAFs (ref genome = 0)
+         inv18.1_gt = case_when(inv18.1_pc1 > -0.02 ~ "SS",
+                              inv18.1_pc1 < -0.02 & inv18.1_pc1 > -0.12 ~ "SN",
+                              inv18.1_pc1 < -0.12 ~ "NN"),
+         inv18.2_gt = case_when(inv18.2_pc2 < 0.07 ~ "SS",
+                              inv18.2_pc2 < 0.17 & inv18.2_pc2 > 0.07 ~ "SN",
+                              inv18.2_pc2 > 0.17 ~ "NN"),
+         inv24.1_gt = case_when(inv24.1_pc1 > -0.05 ~ "NN",
+                              inv24.1_pc1 < -0.05 & inv24.1_pc1 > -0.15 ~ "SN",
+                              inv24.1_pc1 < -0.15 ~ "SS"))
+
+# plot just inv11
+p11 <- inds_inv_gts %>%
+  filter(pop != "RGen0") %>% 
+  ggplot(aes(x=inv11_gt,y=Total_Length)) +
+  geom_violin(aes()) +
+  geom_jitter(aes(color=pop),width=0.2,alpha=0.6) +
+  stat_summary(geom="point",fun="mean",pch=8,size=3) +
+  theme_bw() +
+  stat_compare_means(comparisons=list(c("NN","NS"),c("NS","SS"),c("NN","SS")),
+                     label="p.signif",exact=FALSE) +
+  facet_wrap(~pop)
+
+# plot just inv18.1
+p18.1 <- inds_inv_gts %>%
+  filter(pop != "RGen0") %>%
+  ggplot(aes(x=inv18.1_gt,y=Total_Length)) +
+  geom_violin(aes()) +
+  geom_jitter(aes(color=pop),width=0.2,alpha=0.6) +
+  stat_summary(geom="point",fun="mean",pch=8,size=3) +
+  theme_bw() +
+  stat_compare_means(comparisons=list(c("NN","NS"),c("NS","SS"),c("NN","SS")),
+                     label="p.signif",exact=FALSE)
+
+# plot just inv18.2
+p18.2 <- inds_inv_gts %>%
+  filter(pop != "RGen0") %>%
+  ggplot(aes(x=inv18.2_gt,y=Total_Length)) +
+  geom_violin(aes()) +
+  geom_jitter(aes(color=pop),width=0.2,alpha=0.6) +
+  stat_summary(geom="point",fun="mean",pch=8,size=3) +
+  theme_bw() +
+  stat_compare_means(comparisons=list(c("NN","NS"),c("NS","SS"),c("NN","SS")),
+                     label="p.signif",exact=FALSE)
+
+# plot just inv24
+p24.1 <- inds_inv_gts %>%
+  filter(pop != "RGen0") %>%
+  ggplot(aes(x=inv24.1_gt,y=Total_Length)) +
+  geom_violin(aes()) +
+  geom_jitter(aes(color=pop),width=0.2,alpha=0.6) +
+  stat_summary(geom="point",fun="mean",pch=8,size=3) +
+  theme_bw() +
+  stat_compare_means(comparisons=list(c("NN","NS"),c("NS","SS"),c("NN","SS")),
+                     label="p.signif",exact=FALSE)
+
+ggarrange(p11,p18.1,p18.2,p24.1,
+          common.legend = TRUE)
+
+# look at number of individuals per karyotype
+inds_inv_gts %>%
+  pivot_longer(cols=inv11_gt:inv24.1_gt,names_to = "inversion", values_to="genotype") %>%
+  group_by(pop) %>%
+  mutate(total_obs = n()) %>%
+  group_by(pop,inversion,genotype) %>%
+  summarize(n_obs = n(),
+            total_obs_pop = mean(total_obs),
+            prop_gt = n_obs/total_obs_pop,
+            .groups="keep") %>%
+  filter(inversion != "inv18.2_gt") %>%
+  ggplot(aes(x=pop)) +
+  geom_bar(aes(y=prop_gt,fill=genotype),position="stack", stat="identity") +
+  facet_wrap(~inversion) +
+  theme_bw() +
+  scale_fill_viridis_d() +
+  theme(axis.text.x = element_text(angle=45, vjust=0.5))
+
+# table of inversion freqs
+inds_inv_gts %>%
+  pivot_longer(cols=inv11_gt:inv24.1_gt,names_to = "inversion", values_to="genotype") %>%
+  group_by(pop) %>%
+  mutate(total_obs = n()) %>%
+  group_by(pop,inversion,genotype) %>%
+  summarize(n_obs = n(),
+            total_obs_pop = mean(total_obs),
+            prop_gt = n_obs/total_obs_pop,
+            .groups="keep")
+
+# length plots by pop and inv
+library(RColorBrewer)
+colors=c('darkgoldenrod1', brewer.pal(9,'Oranges')[c(6)], brewer.pal(9,'Greens')[4], brewer.pal(10,'Paired')[4], 'steelblue1', 'dodgerblue4')
+
+inds_inv_gts %>%
+  pivot_longer(cols=inv11_gt:inv24.1_gt,names_to = "inversion", values_to="genotype") %>%
+  filter(inversion != "inv18.2_gt") %>%
+  mutate(genotype=factor(genotype,levels=c("SS","SN","NN"))) %>%
+  ggplot(aes(x=genotype,y=Total_Length)) +
+  geom_violin(aes()) +
+  geom_jitter(aes(color=pop),width=0.2,alpha=0.6) +
+  stat_summary(geom="point",fun="mean",pch=8,size=3) +
+  theme_bw() +
+  #stat_compare_means(comparisons=list(c("NN","SN"),c("SN","SS"),c("NN","SS")),
+  #                   label="p.signif",exact=FALSE) +
+  facet_grid(cols=vars(inversion),rows=vars(pop),
+             labeller = labeller(inversion=c(inv11_gt = "inv11",
+                                      inv18.1_gt = "inv18",
+                                      inv24.1_gt = "inv24"))) +
+  theme(legend.position = "none") +
+  ylab("Total Length (mm)") +
+  xlab("") +
+  scale_color_manual(values=exp_colors_RGen0)
+```
+
+```{r write-table}
+## write table with inversion genotypes, to send to maria for making plots
+inds_inv_gts %>%
+  select(-V1) %>%
+  write_csv("mme_exp_main_linkage_inv_gts.csv")
+
+#inds_inv_gts <- read_csv("mme_exp_main_linkage_inv_gts.csv")
+
+```
+
