@@ -1,0 +1,22 @@
+crosstype: f2
+geno: mme_qtl_geno.csv
+pheno: mme_qtl_phenos.csv
+covar: mme_qtl_covar.csv
+gmap: mme_qtl_gmap.csv
+pmap: mme_qtl_pmap.csv
+alleles: ["S", "N"]
+genotypes:
+  SS: 1
+  NS: 2
+  NN: 3  
+sex:
+  covar: sex
+  f: female
+  m: male
+cross_info:
+  covar: cross_direction
+  (SxN)x(SxN): 0
+  (NxS)x(NxS): 1
+na.strings:
+- '-'
+- NA
