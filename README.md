@@ -7,6 +7,14 @@ Files for QTL analyses.
 
 Location: [`QTL`](https://github.com/makopyan/silverside-QTLpops/tree/main/QTL)
 
+- **[`mme_qtl_covar.csv`](https://github.com/makopyan/silverside-QTLpops/blob/main/QTL/mme_qtl_covar.csv)** - Covariate data for QTL mapping (e.g., sex, cross, age)
+- **[`mme_qtl_geno.csv`](https://github.com/makopyan/silverside-QTLpops/blob/main/QTL/mme_qtl_geno.csv)** - Genotype data for QTL mapping
+- **[`mme_qtl_phenos.csv`](https://github.com/makopyan/silverside-QTLpops/blob/main/QTL/mme_qtl_phenos.csv)** - Phenotype data for QTL mapping
+- **[`mme_qtl_gmap.csv`](https://github.com/makopyan/silverside-QTLpops/blob/main/QTL/mme_qtl_gmap.csv)** - Genetic map with marker positions in centiMorgans
+- **[`mme_qtl_pmap.csv`](https://github.com/makopyan/silverside-QTLpops/blob/main/QTL/mme_qtl_pmap.csv)** - Physical map with marker positions in base pairs
+- **[`mme_qtl.yaml`](https://github.com/makopyan/silverside-QTLpops/blob/main/QTL/mme_qtl.yaml)** - YAML control file for R/qtl2 analysis
+- **[`mme_rqtl2.R`](https://github.com/makopyan/silverside-QTLpops/blob/main/QTL/mme_rqtl2.R)** - R script for running QTL mapping with R/qtl2
+
 ## Wild Population Analysis Files
 
 Files for population genomic analyses and inversion-trait associations.
