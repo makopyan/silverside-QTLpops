@@ -1,0 +1,2721 @@
+---
+title: "geographic_cpoints_inversions"
+author: "Arne Jacobs"
+date: "11/10/2020"
+output: github_document
+highlight: pygments
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+names(knitr::knit_engines$get())
+```
+
+Load R-packages:
+```{r, eval=F, include=F}
+#Plotting:
+library(tidyverse)
+library(ggfortify)
+library(RColorBrewer)
+library(wesanderson)
+library(cowplot)
+library(ggridges)
+library(reshape2)
+library(ggtree)
+library(patchwork)
+library(lmerTest)
+library(lme4)
+library(scales)
+library(windowscanr)
+library(corrr)
+library(vegan)
+library(conStruct)
+library(ade4)
+library(gradientForest)
+library(matrixcalc)
+library(report)
+
+```
+
+
+
+# Estimating inversion frequencies from PCA 
+
+
+## Results for all populations
+
+PCA based on covariance matrix from one-read sampling in angsd
+
+```{r, eval = FALSE}
+cov.inv24.m=as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_inv24_filtsnps_ibs.covMat"))
+ind.df=read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+cov.inv24.m.pca=eigen(cov.inv24.m)
+x <- sum(cov.inv24.m.pca$values)
+varPC1 <- (cov.inv24.m.pca$values[1]/x)*100
+varPC2 <- (cov.inv24.m.pca$values[2]/x)*100
+
+cov.inv24.m.pca=as_tibble(cov.inv24.m.pca$vectors)
+names(cov.inv24.m.pca)[1]=c("PC1")
+names(cov.inv24.m.pca)[2]=c("PC2")
+cov.inv24.m.pca.df=as_tibble(cbind(ind.df, cov.inv24.m.pca))
+cov.inv24.m.pca.df$Pop <- ordered(cov.inv24.m.pca.df$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+x <- sum(cov.inv24.m.pca$values)
+varPC1 <- (cov.inv24.m.pca$values[1]/x)*100
+varPC2 <- (cov.inv24.m.pca$values[2]/x)*100
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+
+inv24.pca = ggplot(data=cov.inv24.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal)
+
+
+ggplot(data=cov.inv24.m.pca.df, aes(x=PC1,y=Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+cov.inv24.m.pca.df.filt=filter(cov.inv24.m.pca.df, Ind != "JIGA_1070")
+cov.inv24.m.pca.df.filt=cov.inv24.m.pca.df.filt[,1:4]
+cov.inv24.m.pca.df.filt$SAllele = if_else(condition = cov.inv24.m.pca.df.filt$PC1 < -0.05, "S", "Other")
+cov.inv24.m.pca.df.filt$NAllele = if_else(condition = cov.inv24.m.pca.df.filt$PC1 > 0, "N", "Other")
+cov.inv24.m.pca.df.filt$HET = if_else(condition = cov.inv24.m.pca.df.filt$SAllele == cov.inv24.m.pca.df.filt$NAllele, "HET", "NA")
+
+
+#karyotypes:
+cov.inv24.m.pca.df.filt.HET = filter(cov.inv24.m.pca.df.filt, HET == "HET")
+cov.inv24.m.pca.df.filt.HET$ktype = "het"
+
+cov.inv24.m.pca.df.filt.S = filter(cov.inv24.m.pca.df.filt, SAllele == "S")
+cov.inv24.m.pca.df.filt.S$ktype = "south"
+
+cov.inv24.m.pca.df.filt.N = filter(cov.inv24.m.pca.df.filt, NAllele == "N")
+cov.inv24.m.pca.df.filt.N$ktype = "north"
+
+inv24.pca.karyotypes.df = as_tibble(rbind(cov.inv24.m.pca.df.filt.S[,c(1,2,3,4,8)],
+                                cov.inv24.m.pca.df.filt.N[,c(1,2,3,4,8)],
+                                cov.inv24.m.pca.df.filt.HET[,c(1,2,3,4,8)]))
+write_csv(inv24.pca.karyotypes.df,"~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/Inv24_ind_karyotypes_allpops.csv")
+
+
+#Population frequencies
+pop = as.vector(unique(cov.inv24.m.pca.df.filt$Pop))
+Prop.S.Allele2 <- list()
+for (i in pop) { 
+  df = filter(cov.inv24.m.pca.df.filt, Pop == i)
+  Sallele.pure = length((filter(df, SAllele == "S"))$Ind)*2 
+  Nallele.pure  = length((filter(df, NAllele == "N"))$Ind)*2 
+  HETind = ((length(df$Ind)) - (Sallele.pure/2 + Nallele.pure/2))
+  Sallele = Sallele.pure + HETind/2
+  Nallele = Nallele.pure + HETind/2
+  Alleles = length(df$Ind)*2
+  Prop.S.Allele = Sallele/Alleles
+  Prop.S.Allele2[[i]] <- Prop.S.Allele
+}
+
+Prop.S.Allele.chr24.df = as_tibble(cbind(as.data.frame(rbind(Prop.S.Allele2$JIGA, Prop.S.Allele2$LRSC, Prop.S.Allele2$MCNC, Prop.S.Allele2$OINC, Prop.S.Allele2$CTVA, Prop.S.Allele2$PANY, Prop.S.Allele2$MCCT, Prop.S.Allele2$DXMA, Prop.S.Allele2$MDME, Prop.S.Allele2$MBNS, Prop.S.Allele2$HXNS, Prop.S.Allele2$MAQU))$V1, c("JIGA","LRSC","MCNC","OINC","CTVA","PANY","MCCT","DXMA","MDME","MBNS","HXNS","MAQU")))
+names(Prop.S.Allele.chr24.df) = c("Prop.S.Allele.chr24","Pop")
+```
+
+
+```{r, eval = FALSE}
+cov.inv19.m=as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_inv19_filtsnps_ibs.covMat"))
+ind.df=read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+cov.inv19.m.pca=eigen(cov.inv19.m)
+cov.inv19.m.pca=as_tibble(cov.inv19.m.pca$vectors)
+names(cov.inv19.m.pca)[1]=c("PC1")
+names(cov.inv19.m.pca)[2]=c("PC2")
+cov.inv19.m.pca.df=as_tibble(cbind(ind.df, cov.inv19.m.pca))
+cov.inv19.m.pca.df$Pop <- ordered(cov.inv19.m.pca.df$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+inv19.pca = ggplot(data=cov.inv19.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme(legend.position = "NA")
+
+ggplot(data=cov.inv19.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+ggplot(data=cov.inv19.m.pca.df, aes(x=PC1,y=Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+cov.inv19.m.pca.df.filt=filter(cov.inv19.m.pca.df, Ind != "JIGA_1070")
+cov.inv19.m.pca.df.filt=cov.inv19.m.pca.df.filt[,1:4]
+cov.inv19.m.pca.df.filt$SAllele = if_else(condition = cov.inv19.m.pca.df.filt$PC1 < -0.05, "S", "Other")
+cov.inv19.m.pca.df.filt$NAllele = if_else(condition = cov.inv19.m.pca.df.filt$PC1 > 0, "N", "Other")
+
+pop = as.vector(unique(cov.inv19.m.pca.df.filt$Pop))
+Prop.S.Allele2 <- list()
+for (i in pop) { 
+  df = filter(cov.inv19.m.pca.df.filt, Pop == i)
+  Sallele.pure = length((filter(df, SAllele == "S"))$Ind)*2 
+  Nallele.pure  = length((filter(df, NAllele == "N"))$Ind)*2 
+  HETind = ((length(df$Ind)) - (Sallele.pure/2 + Nallele.pure/2))
+  Sallele = Sallele.pure + HETind/2
+  Nallele = Nallele.pure + HETind/2
+  Alleles = length(df$Ind)*2
+  Prop.S.Allele = Sallele/Alleles
+  Prop.S.Allele2[[i]] <- Prop.S.Allele
+}
+
+Prop.S.Allele.chr19.df = as_tibble(cbind(as.data.frame(rbind(Prop.S.Allele2$JIGA, Prop.S.Allele2$LRSC, Prop.S.Allele2$MCNC, Prop.S.Allele2$OINC, Prop.S.Allele2$CTVA, Prop.S.Allele2$PANY, Prop.S.Allele2$MCCT, Prop.S.Allele2$DXMA, Prop.S.Allele2$MDME, Prop.S.Allele2$MBNS, Prop.S.Allele2$HXNS, Prop.S.Allele2$MAQU))$V1, c("JIGA","LRSC","MCNC","OINC","CTVA","PANY","MCCT","DXMA","MDME","MBNS","HXNS","MAQU")))
+names(Prop.S.Allele.chr19.df) = c("Prop.S.Allele.chr19","Pop")
+```
+
+```{r, eval = FALSE}
+cov.inv18.m=as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_inv18_filtsnps_ibs.covMat"))
+ind.df=read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+cov.inv18.m.pca=eigen(cov.inv18.m)
+cov.inv18.m.pca=as_tibble(cov.inv18.m.pca$vectors)
+names(cov.inv18.m.pca)[1]=c("PC1")
+names(cov.inv18.m.pca)[2]=c("PC2")
+cov.inv18.m.pca.df=as_tibble(cbind(ind.df, cov.inv18.m.pca))
+cov.inv18.m.pca.df$Pop <- ordered(cov.inv18.m.pca.df$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+inv18.pca = ggplot(data=cov.inv18.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme(legend.position = "NA")
+
+ggplot(data=cov.inv18.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+ggplot(data=cov.inv18.m.pca.df, aes(x=PC1,y=Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+cov.inv18.m.pca.df.filt=filter(cov.inv18.m.pca.df, Ind != "JIGA_1070")
+cov.inv18.m.pca.df.filt=cov.inv18.m.pca.df.filt[,1:4]
+cov.inv18.m.pca.df.filt$SAllele = if_else(condition = cov.inv18.m.pca.df.filt$PC1 > 0.06, "S", "Other")
+cov.inv18.m.pca.df.filt$NAllele = if_else(condition = cov.inv18.m.pca.df.filt$PC1 < 0, "N", "Other")
+cov.inv18.m.pca.df.filt$HET = if_else(condition = cov.inv18.m.pca.df.filt$SAllele == cov.inv18.m.pca.df.filt$NAllele, "HET", "NA")
+
+
+#karyotypes:
+cov.inv18.m.pca.df.filt.HET = filter(cov.inv18.m.pca.df.filt, HET == "HET")
+cov.inv18.m.pca.df.filt.HET$ktype = "het"
+
+cov.inv18.m.pca.df.filt.S = filter(cov.inv18.m.pca.df.filt, SAllele == "S")
+cov.inv18.m.pca.df.filt.S$ktype = "south"
+
+cov.inv18.m.pca.df.filt.N = filter(cov.inv18.m.pca.df.filt, NAllele == "N")
+cov.inv18.m.pca.df.filt.N$ktype = "north"
+
+inv18.pca.karyotypes.df = as_tibble(rbind(cov.inv18.m.pca.df.filt.S[,c(1,2,3,4,8)],
+                                cov.inv18.m.pca.df.filt.N[,c(1,2,3,4,8)],
+                                cov.inv18.m.pca.df.filt.HET[,c(1,2,3,4,8)]))
+write_csv(inv18.pca.karyotypes.df,"~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/Inv18_ind_karyotypes_allpops.csv")
+
+pop = as.vector(unique(cov.inv18.m.pca.df.filt$Pop))
+Prop.S.Allele2 <- list()
+for (i in pop) { 
+  df = filter(cov.inv18.m.pca.df.filt, Pop == i)
+  Sallele.pure = length((filter(df, SAllele == "S"))$Ind)*2 
+  Nallele.pure  = length((filter(df, NAllele == "N"))$Ind)*2 
+  HETind = ((length(df$Ind)) - (Sallele.pure/2 + Nallele.pure/2))
+  Sallele = Sallele.pure + HETind/2
+  Nallele = Nallele.pure + HETind/2
+  Alleles = length(df$Ind)*2
+  Prop.S.Allele = Sallele/Alleles
+  Prop.S.Allele2[[i]] <- Prop.S.Allele
+}
+
+Prop.S.Allele.chr18.df = as_tibble(cbind(as.data.frame(rbind(Prop.S.Allele2$JIGA, Prop.S.Allele2$LRSC, Prop.S.Allele2$MCNC, Prop.S.Allele2$OINC, Prop.S.Allele2$CTVA, Prop.S.Allele2$PANY, Prop.S.Allele2$MCCT, Prop.S.Allele2$DXMA, Prop.S.Allele2$MDME, Prop.S.Allele2$MBNS, Prop.S.Allele2$HXNS, Prop.S.Allele2$MAQU))$V1, c("JIGA","LRSC","MCNC","OINC","CTVA","PANY","MCCT","DXMA","MDME","MBNS","HXNS","MAQU")))
+names(Prop.S.Allele.chr18.df) = c("Prop.S.Allele.chr18","Pop")
+```
+
+
+Estimate for chr11
+```{r, eval = FALSE}
+cov.inv11.m=as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_inv11_filtsnps_ibs.covMat"))
+ind.df=read.table("~/Library/CloudStorage//Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+cov.inv11.m.pca=eigen(cov.inv11.m)
+cov.inv11.m.pca=as_tibble(cov.inv11.m.pca$vectors)
+names(cov.inv11.m.pca)[1]=c("PC1")
+names(cov.inv11.m.pca)[2]=c("PC2")
+cov.inv11.m.pca.df=as_tibble(cbind(ind.df, cov.inv11.m.pca))
+cov.inv11.m.pca.df$Pop <- ordered(cov.inv11.m.pca.df$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+inv11.pca = ggplot(data=cov.inv11.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme(legend.position = "NA")
+
+ggplot(data=cov.inv11.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+ggplot(data=cov.inv11.m.pca.df, aes(x=PC1,y=Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+cov.inv11.m.pca.df.filt=filter(cov.inv11.m.pca.df, Ind != "JIGA_1070")
+cov.inv11.m.pca.df.filt=cov.inv11.m.pca.df.filt[,1:4]
+cov.inv11.m.pca.df.filt$SAllele = if_else(condition = cov.inv11.m.pca.df.filt$PC1 < -0.025, "S", "Other")
+cov.inv11.m.pca.df.filt$NAllele = if_else(condition = cov.inv11.m.pca.df.filt$PC1 > 0.05, "N", "Other")
+cov.inv11.m.pca.df.filt$HET = if_else(condition = cov.inv11.m.pca.df.filt$SAllele == cov.inv11.m.pca.df.filt$NAllele, "HET", "NA")
+
+
+#karyotypes:
+cov.inv11.m.pca.df.filt.HET = filter(cov.inv11.m.pca.df.filt, HET == "HET")
+cov.inv11.m.pca.df.filt.HET$ktype = "het"
+
+cov.inv11.m.pca.df.filt.S = filter(cov.inv11.m.pca.df.filt, SAllele == "S")
+cov.inv11.m.pca.df.filt.S$ktype = "south"
+
+cov.inv11.m.pca.df.filt.N = filter(cov.inv11.m.pca.df.filt, NAllele == "N")
+cov.inv11.m.pca.df.filt.N$ktype = "north"
+
+inv11.pca.karyotypes.df = as_tibble(rbind(cov.inv11.m.pca.df.filt.S[,c(1,2,3,4,8)],
+                                cov.inv11.m.pca.df.filt.N[,c(1,2,3,4,8)],
+                                cov.inv11.m.pca.df.filt.HET[,c(1,2,3,4,8)]))
+write_csv(inv11.pca.karyotypes.df,"~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/Inv11_ind_karyotypes_allpops.csv")
+
+pop = as.vector(unique(cov.inv11.m.pca.df.filt$Pop))
+Prop.S.Allele2 <- list()
+for (i in pop) { 
+  df = filter(cov.inv11.m.pca.df.filt, Pop == i)
+  Sallele.pure = length((filter(df, SAllele == "S"))$Ind)*2 
+  Nallele.pure  = length((filter(df, NAllele == "N"))$Ind)*2 
+  HETind = ((length(df$Ind)) - (Sallele.pure/2 + Nallele.pure/2))
+  Sallele = Sallele.pure + HETind/2
+  Nallele = Nallele.pure + HETind/2
+  Alleles = length(df$Ind)*2
+  Prop.S.Allele = Sallele/Alleles
+  Prop.S.Allele2[[i]] <- Prop.S.Allele
+}
+
+Prop.S.Allele.chr11.df = as_tibble(cbind(as.data.frame(rbind(Prop.S.Allele2$JIGA, Prop.S.Allele2$LRSC, Prop.S.Allele2$MCNC, Prop.S.Allele2$OINC, Prop.S.Allele2$CTVA, Prop.S.Allele2$PANY, Prop.S.Allele2$MCCT, Prop.S.Allele2$DXMA, Prop.S.Allele2$MDME, Prop.S.Allele2$MBNS, Prop.S.Allele2$HXNS, Prop.S.Allele2$MAQU))$V1, c("JIGA","LRSC","MCNC","OINC","CTVA","PANY","MCCT","DXMA","MDME","MBNS","HXNS","MAQU")))
+names(Prop.S.Allele.chr11.df) = c("Prop.S.Allele.chr11","Pop")
+```
+
+```{r, eval = FALSE}
+cov.inv8.m=as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_inv8_filtsnps_ibs.covMat"))
+ind.df=read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+cov.inv8.m.pca=eigen(cov.inv8.m)
+cov.inv8.m.pca=as_tibble(cov.inv8.m.pca$vectors)
+names(cov.inv8.m.pca)[1]=c("PC1")
+names(cov.inv8.m.pca)[2]=c("PC2")
+cov.inv8.m.pca.df=as_tibble(cbind(ind.df, cov.inv8.m.pca))
+cov.inv8.m.pca.df$Pop <- ordered(cov.inv8.m.pca.df$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+inv8.pca = ggplot(data=cov.inv8.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal)+
+  theme(legend.position = "NA")
+
+ggplot(data=cov.inv8.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+ggplot(data=cov.inv8.m.pca.df, aes(x=PC1,y=Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+cov.inv8.m.pca.df.filt=filter(cov.inv8.m.pca.df, Ind != "JIGA_1070", Ind != "MDME42")
+cov.inv8.m.pca.df.filt=cov.inv8.m.pca.df.filt[,1:4]
+cov.inv8.m.pca.df.filt$SAllele = if_else(condition = cov.inv8.m.pca.df.filt$PC1 > 0.075, "S", "Other")
+cov.inv8.m.pca.df.filt$NAllele = if_else(condition = cov.inv8.m.pca.df.filt$PC1 < 0.02, "N", "Other")
+
+pop = as.vector(unique(cov.inv8.m.pca.df.filt$Pop))
+Prop.S.Allele2 <- list()
+for (i in pop) { 
+  df = filter(cov.inv8.m.pca.df.filt, Pop == i)
+  Sallele.pure = length((filter(df, SAllele == "S"))$Ind)*2 
+  Nallele.pure  = length((filter(df, NAllele == "N"))$Ind)*2 
+  HETind = ((length(df$Ind)) - (Sallele.pure/2 + Nallele.pure/2))
+  Sallele = Sallele.pure + HETind/2
+  Nallele = Nallele.pure + HETind/2
+  Alleles = length(df$Ind)*2
+  Prop.S.Allele = Sallele/Alleles
+  Prop.S.Allele2[[i]] <- Prop.S.Allele
+}
+
+Prop.S.Allele.chr8.df = as_tibble(cbind(as.data.frame(rbind(Prop.S.Allele2$JIGA, Prop.S.Allele2$LRSC, Prop.S.Allele2$MCNC, Prop.S.Allele2$OINC, Prop.S.Allele2$CTVA, Prop.S.Allele2$PANY, Prop.S.Allele2$MCCT, Prop.S.Allele2$DXMA, Prop.S.Allele2$MDME, Prop.S.Allele2$MBNS, Prop.S.Allele2$HXNS, Prop.S.Allele2$MAQU))$V1, c("JIGA","LRSC","MCNC","OINC","CTVA","PANY","MCCT","DXMA","MDME","MBNS","HXNS","MAQU")))
+names(Prop.S.Allele.chr8.df) = c("Prop.S.Allele.chr8","Pop")
+```
+
+```{r, eval = FALSE}
+cov.inv7.m=as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_inv7_filtsnps_ibs.covMat"))
+ind.df=read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+cov.inv7.m.pca=eigen(cov.inv7.m)
+cov.inv7.m.pca=as_tibble(cov.inv7.m.pca$vectors)
+names(cov.inv7.m.pca)[1]=c("PC1")
+names(cov.inv7.m.pca)[2]=c("PC2")
+cov.inv7.m.pca.df=as_tibble(cbind(ind.df, cov.inv7.m.pca))
+cov.inv7.m.pca.df$Pop <- ordered(cov.inv7.m.pca.df$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+inv7.pca = ggplot(data=cov.inv7.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal)+
+  theme(legend.position = "NA")
+
+ggplot(data=cov.inv7.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+ggplot(data=cov.inv7.m.pca.df, aes(x=PC1,y=Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+cov.inv7.m.pca.df.filt=filter(cov.inv7.m.pca.df, Ind != "JIGA_1070")
+cov.inv7.m.pca.df.filt=cov.inv7.m.pca.df.filt[,1:4]
+cov.inv7.m.pca.df.filt$SAllele = if_else(condition = cov.inv7.m.pca.df.filt$PC1 > 0.05, "S", "Other")
+cov.inv7.m.pca.df.filt$NAllele = if_else(condition = cov.inv7.m.pca.df.filt$PC1 < 0, "N", "Other")
+
+pop = as.vector(unique(cov.inv7.m.pca.df.filt$Pop))
+Prop.S.Allele2 <- list()
+for (i in pop) { 
+  df = filter(cov.inv7.m.pca.df.filt, Pop == i)
+  Sallele.pure = length((filter(df, SAllele == "S"))$Ind)*2 
+  Nallele.pure  = length((filter(df, NAllele == "N"))$Ind)*2 
+  HETind = ((length(df$Ind)) - (Sallele.pure/2 + Nallele.pure/2))
+  Sallele = Sallele.pure + HETind/2
+  Nallele = Nallele.pure + HETind/2
+  Alleles = length(df$Ind)*2
+  Prop.S.Allele = Sallele/Alleles
+  Prop.S.Allele2[[i]] <- Prop.S.Allele
+}
+
+Prop.S.Allele.chr7.df = as_tibble(cbind(as.data.frame(rbind(Prop.S.Allele2$JIGA, Prop.S.Allele2$LRSC, Prop.S.Allele2$MCNC, Prop.S.Allele2$OINC, Prop.S.Allele2$CTVA, Prop.S.Allele2$PANY, Prop.S.Allele2$MCCT, Prop.S.Allele2$DXMA, Prop.S.Allele2$MDME, Prop.S.Allele2$MBNS, Prop.S.Allele2$HXNS, Prop.S.Allele2$MAQU))$V1, c("JIGA","LRSC","MCNC","OINC","CTVA","PANY","MCCT","DXMA","MDME","MBNS","HXNS","MAQU")))
+names(Prop.S.Allele.chr7.df) = c("Prop.S.Allele.chr7","Pop")
+```
+
+```{r, eval = FALSE}
+cov.inv4.m=as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_inv4_filtsnps_ibs.covMat"))
+ind.df=read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+cov.inv4.m.pca=eigen(cov.inv4.m)
+cov.inv4.m.pca=as_tibble(cov.inv4.m.pca$vectors)
+names(cov.inv4.m.pca)[1]=c("PC1")
+names(cov.inv4.m.pca)[2]=c("PC2")
+cov.inv4.m.pca.df=as_tibble(cbind(ind.df, cov.inv4.m.pca))
+cov.inv4.m.pca.df$Pop <- ordered(cov.inv4.m.pca.df$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+inv4.pca = ggplot(data=cov.inv4.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme(legend.position = "NA")
+
+ggplot(data=cov.inv4.m.pca.df, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+ggplot(data=cov.inv4.m.pca.df, aes(x=PC1,y=Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+cov.inv4.m.pca.df.filt=filter(cov.inv4.m.pca.df, Ind != "JIGA_1070", Ind != "MCCT_M24", Ind != "MCCT_M04", Ind != "MCCT_M18", Ind != "OINC19")
+cov.inv4.m.pca.df.filt=cov.inv4.m.pca.df.filt[,1:4]
+cov.inv4.m.pca.df.filt$SAllele = if_else(condition = cov.inv4.m.pca.df.filt$PC1 > 0.0375, "S", "Other")
+cov.inv4.m.pca.df.filt$NAllele = if_else(condition = cov.inv4.m.pca.df.filt$PC1 < 0, "N", "Other")
+
+pop = as.vector(unique(cov.inv4.m.pca.df.filt$Pop))
+Prop.S.Allele2 <- list()
+for (i in pop) { 
+  df = filter(cov.inv4.m.pca.df.filt, Pop == i)
+  Sallele.pure = length((filter(df, SAllele == "S"))$Ind)*2 
+  Nallele.pure  = length((filter(df, NAllele == "N"))$Ind)*2 
+  HETind = ((length(df$Ind)) - (Sallele.pure/2 + Nallele.pure/2))
+  Sallele = Sallele.pure + HETind/2
+  Nallele = Nallele.pure + HETind/2
+  Alleles = length(df$Ind)*2
+  Prop.S.Allele = Sallele/Alleles
+  Prop.S.Allele2[[i]] <- Prop.S.Allele
+}
+
+Prop.S.Allele.chr4.df = as_tibble(cbind(as.data.frame(rbind(Prop.S.Allele2$JIGA, Prop.S.Allele2$LRSC, Prop.S.Allele2$MCNC, Prop.S.Allele2$OINC, Prop.S.Allele2$CTVA, Prop.S.Allele2$PANY, Prop.S.Allele2$MCCT, Prop.S.Allele2$DXMA, Prop.S.Allele2$MDME, Prop.S.Allele2$MBNS, Prop.S.Allele2$HXNS, Prop.S.Allele2$MAQU))$V1, c("JIGA","LRSC","MCNC","OINC","CTVA","PANY","MCCT","DXMA","MDME","MBNS","HXNS","MAQU")))
+names(Prop.S.Allele.chr4.df) = c("Prop.S.Allele.chr4","Pop")
+```
+
+Combine PCA plots
+```{r, eval = FALSE}
+inv.pca = (inv4.pca | inv7.pca | inv8.pca | inv19.pca) / (inv11.pca | inv18.pca | inv24.pca) 
+
+inv.pca + plot_annotation(tag_levels = 'A')
+```
+
+
+
+
+Combine all dataframes and plot inversion frequency cpoints
+```{r, eval = FALSE}
+Prop.S.Alleles.df = as_tibble(as.data.frame(cbind(Prop.S.Allele.chr4.df,Prop.S.Allele.chr7.df,
+                                    Prop.S.Allele.chr8.df,Prop.S.Allele.chr11.df,Prop.S.Allele.chr18.df,
+                                    Prop.S.Allele.chr19.df,Prop.S.Allele.chr24.1.df,
+                                    Prop.S.Allele.chr24.df))[,c(2,1,3,5,7,9,11,13,15)])
+
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+
+inv4 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr4)) +
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr4), method = "loess")
+inv7 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr7))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr7), method = "loess")
+inv8 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr8))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr8), method = "loess")
+inv11 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr11))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr11), method = "loess")
+inv18 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr18))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr18), method = "loess")
+inv19 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr19))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr19), method = "loess")
+inv24.1 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr24.1))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr24.1), method = "loess")
+inv24 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr24))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr24), method = "loess")
+
+inv.cpoints = (inv4 | inv7 | inv8| inv11) / (inv18 | inv19 | inv24.1 | inv24)
+
+inv4 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr4)) +
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr4), method = "loess")
+inv7 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr7))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr7), method = "loess")
+inv8 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr8))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr8), method = "loess")
+inv11 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr11))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr11), method = "loess")
+inv18 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr18))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr18), method = "loess")
+inv19 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr19))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr19), method = "loess")
+inv24.1 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr24.1))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr24.1), method = "loess")
+inv24 = ggplot(data = Prop.S.Alleles.df2) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr24))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr24), method = "loess")
+
+inv.cpoint.dist = (inv4 | inv7 | inv8 | inv11) / (inv18 | inv19 | inv24.1 | inv24)
+```
+
+
+## Plot inversion and neutral clines without HXNS and MAQU
+
+Combine all dataframes and plot inversion frequency cpoints
+```{r, eval = FALSE}
+Prop.S.Alleles.df = as_tibble(as.data.frame(cbind(Prop.S.Allele.chr4.df,Prop.S.Allele.chr7.df,
+                                    Prop.S.Allele.chr8.df,Prop.S.Allele.chr11.df,Prop.S.Allele.chr18.df,
+                                    Prop.S.Allele.chr19.df,Prop.S.Allele.chr24.1.df,
+                                    Prop.S.Allele.chr24.df))[,c(2,1,3,5,7,9,11,13,15)])
+
+write_csv(Prop.S.Alleles.df, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_phenotype_associatons/InvFreq_southernAllele_allpops.csv")
+
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+
+
+inv4 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr4)) +
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr4), method = "loess")
+inv7 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr7))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr7), method = "loess")
+inv8 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr8))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr8), method = "loess")
+inv11 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr11))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr11), method = "loess")
+inv18 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr18))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr18), method = "loess")
+inv19 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr19))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr19), method = "loess")
+inv24 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=lat, y=Prop.S.Allele.chr24))+
+  geom_smooth(aes(x=lat, y=Prop.S.Allele.chr24), method = "loess")
+
+inv.cpoints = (inv4 | inv7 | inv8| inv11) / (inv18 | inv19 | inv24)
+
+inv4 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr4)) +
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr4), method = "loess")
+inv7 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr7))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr7), method = "loess")
+inv8 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr8))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr8), method = "loess")
+inv11 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr11))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr11), method = "loess")
+inv18 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr18))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr18), method = "loess")
+inv19 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr19))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr19), method = "loess")
+inv24 = ggplot(data = Prop.S.Alleles.df2.filt) +
+  geom_point(aes(x=Dist, y=Prop.S.Allele.chr24))+
+  geom_smooth(aes(x=Dist, y=Prop.S.Allele.chr24), method = "loess")
+
+inv.cpoint.dist = (inv4 | inv7 | inv8 | inv11) / (inv18 | inv19 | inv24)
+```
+
+
+```{r, eval = FALSE}
+Mme.cov.thinned.noinv <- as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_thinnedsnps_noinv.cov", header = F))
+Ind.id <- read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+mme.pca <- eigen(Mme.cov.thinned.noinv)
+eigenvectors <- (mme.pca$vectors)
+pca.vectors <- cbind(Ind.id, eigenvectors)
+names(pca.vectors)[3] <- "PC1"
+names(pca.vectors)[4] <- "PC2"
+pca.vectors.filt = filter(pca.vectors, Pop != "HXNS", Pop != "MAQU")
+pca.vectors.filt$Pop <- ordered(pca.vectors.filt$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS"))
+
+ggplot(data=pca.vectors.filt, aes(x=PC1,y=PC2, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+ggplot(data=pca.vectors.filt, aes(x=PC1,y=Pop, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Estimate the frequency of the southern allele by population
+#Remove individual JIGA_1070 as it shows a weird pattern (intermediate between S-Allele and HET)
+pca.vectors.df.filt=as_tibble(pca.vectors.filt)
+pca.vectors.df.filt=pca.vectors.df.filt[,1:3]
+
+ggplot(data=pca.vectors.df.filt, aes(x=-PC1,y=Pop, colour = Pop)) +
+  geom_point(size = 4, shape=21)
+
+#Add latitude from population information dataframe
+pop <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+pop.filt = filter(pop, Pop != "HXNS", Pop != "MAQU")
+pca.vectors.df.filt2 = left_join(pca.vectors.df.filt, pop.filt, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+pca.vectors.df.filt2 = left_join(pca.vectors.df.filt2, dist, by="Pop")
+
+anc = ggplot(data = pca.vectors.df.filt2) +
+  geom_point(aes(x=Dist, y=-PC1, colour = Pop)) +
+  geom_smooth(aes(x=Dist, y=-PC1), method = "loess", span = 0.5)
+anc
+```
+
+
+Plot neutral admixture proportions for K=2 w/o inversion without HXNS/MAQU
+```{r, eval = FALSE}
+admK2 = RcppCNPy::npyLoad("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_woNorthern_thinnedsnps_noinv_k2.admix.Q.npy")
+Ind.id <- read_delim("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", col_names = T, delim = "\t")
+Ind.id.noNorth = filter(Ind.id, Pop != "HXNS", Pop != "MAQU")
+Mme.thinned.noinv.nNorth.admix.ind = cbind(Ind.id.noNorth, admK2)
+
+#Add latitude from population information dataframe
+pop <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+pop.filt = filter(pop, Pop != "HXNS", Pop != "MAQU")
+Mme.thinned.noinv.nNorth.admix.ind = left_join(Mme.thinned.noinv.nNorth.admix.ind, pop.filt, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Mme.thinned.noinv.nNorth.admix.ind = as_tibble(left_join(Mme.thinned.noinv.nNorth.admix.ind, dist, by="Pop"))
+
+
+#Estimate the mean admixture proportion per pop
+K.neutral.mean <- plyr::ddply(Mme.thinned.noinv.nNorth.admix.ind, c("Pop","Dist","lat"),
+                              summarise, 
+                              K1.mean = mean(`1`), 
+                              K1.sd = sd(`1`))
+
+K.neutral.mean$Pop <- ordered(K.neutral.mean$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS"))
+
+ancK = ggplot(data = K.neutral.mean) +
+  geom_smooth(aes(x=Dist, y=(1-K1.mean)), method = "loess", span = 0.5) +
+  geom_point(aes(x=Dist, y=(1-K1.mean))) +
+  geom_errorbar(aes(x=Dist, y=(1-K1.mean), ymin=(1-K1.mean)-K1.sd, ymax=(1-K1.mean)+K1.sd)) +
+  xlab("Distance from southern pop [km]") +
+  ylab("Southern ancestry")
+ancK
+
+"LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS"))
+ordered = Mme.thinned.noinv.nNorth.admix.ind[order(Mme.thinned.noinv.nNorth.admix.ind$Pop),]
+barplot(t(as.matrix(subset(ordered, select=3:4))), col=c("#05668D", "firebrick"), border=NA)
+```
+
+
+Combined plots of GWancestry and inversion clines
+```{r, eval = FALSE}
+ancK.inv.cpoint.dist = (ancK |inv4 | inv7 | inv8) / (inv11 | inv18 | inv19 | inv24)
+```
+
+
+
+Correlation between inversion freqs and ancestry
+```{r, eval = FALSE}
+Prop.S.Alleles.df2.filt.ancK = left_join(Prop.S.Alleles.df2.filt, K.neutral.mean, by="Pop")
+
+ggplot(Prop.S.Alleles.df2.filt.ancK, aes(x=(1-K1.mean), y=Prop.S.Allele.chr24)) +
+  geom_point() 
+
+ggplot(Prop.S.Alleles.df2.filt.ancK, aes(x=(1-K1.mean), y=Prop.S.Allele.chr19)) +
+  geom_point()
+
+ggplot(Prop.S.Alleles.df2.filt.ancK, aes(x=(1-K1.mean), y=Prop.S.Allele.chr18)) +
+  geom_point() 
+
+ggplot(Prop.S.Alleles.df2.filt.ancK, aes(x=(1-K1.mean), y=Prop.S.Allele.chr11)) +
+  geom_point() 
+
+ggplot(Prop.S.Alleles.df2.filt.ancK, aes(x=(1-K1.mean), y=Prop.S.Allele.chr8)) +
+  geom_point() 
+
+ggplot(Prop.S.Alleles.df2.filt.ancK, aes(x=(1-K1.mean), y=Prop.S.Allele.chr7)) +
+  geom_point() 
+
+ggplot(Prop.S.Alleles.df2.filt.ancK, aes(x=(1-K1.mean), y=Prop.S.Allele.chr4)) +
+  geom_point() 
+```
+
+
+# Association between QTL-linked inversion genotype and body size
+
+Run GLM for body size vs inversion karyotype for all three inversions separately and only for populations that are not fixed or nearly fixed for one of the karyotypes. 
+
+inv11: 
+```{r, eval = FALSE}
+inv11.pca.karyotypes.df = read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Inv11_ind_karyotypes_allpops.csv")
+
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_data.csv", col_types = "ccdd")
+
+inv11.pca.karyotypes.size.df = inner_join(inv11.pca.karyotypes.df, size.df, by=c("Ind","Pop"))
+inv11.pca.karyotypes.size.df$ktype <- ordered(inv11.pca.karyotypes.size.df$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv11.pca.karyotypes.size.df, aes(x=Pop, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv11 karyotype")
+
+
+inv11.pca.karyotypes.size.df.filt = filter(inv11.pca.karyotypes.size.df, Pop == "DXMA" | Pop == "MBNS" | Pop == "HXNS"| Pop == "MDME")
+inv11.pca.karyotypes.size.df.filt = as_tibble(inv11.pca.karyotypes.size.df.filt)
+#inv11.pca.karyotypes.size.df.filt = filter(inv11.pca.karyotypes.size.df, Pop == "HXNS")
+
+lm.fact.inv11 <- lm(StdLgth ~ ktype, data = inv11.pca.karyotypes.size.df.filt)
+summary(lm.fact.inv11)
+
+lmm.fact.inv11 <- lmer(StdLgth ~ ktype + (1 | Pop), data = inv11.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.fact.inv11)
+anova(lmm.fact.inv11)
+report(lmm.fact.inv11)
+effectsize(lmm.fact.inv11)
+
+lmm.int.inv11 <- lmer(StdLgth ~ as.numeric(ktype.int) + (1 | Pop), data = inv11.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.int.inv11)
+anova(lmm.int.inv11)
+report(lmm.int.inv11)
+effectsize(lmm.int.inv11)
+
+
+inv11.pca.karyotypes.size.df.filt2 = inv11.pca.karyotypes.size.df.filt %>% drop_na(StdLgth)
+lmm.fact.inv11.lme <- lmer(StdLgth ~ ktype+ (1 | Pop), data = inv11.pca.karyotypes.size.df.filt2)
+summary(lmm.fact.inv11.lme)
+anova(lmm.fact.inv11.lme)
+
+library(nlme)
+mod <- lme(StdLgth ~ ktype, random = ~1 | Pop, data = inv11.pca.karyotypes.size.df.filt2)
+summary(mod)
+anova(mod)
+
+
+inv11.pca.karyotypes.size.df.filt$ktype <- ordered(inv11.pca.karyotypes.size.df.filt$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv11.pca.karyotypes.size.df.filt, aes(x=ktype, y=StdLgth, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = T, colour = "white", size = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv11 karyotype")
+
+ggplot(data = inv11.pca.karyotypes.size.df.filt, aes(x=Pop, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  geom_jitter(aes(colour=Pop)) +
+  scale_fill_manual(values = c("#4f000b","#FFC100","#3d5a80")) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Pop")
+
+inv11.pca.karyotypes.sl.df.filt.dx = filter(inv11.pca.karyotypes.size.df.filt, Pop == "DXMA")
+inv11.pca.karyotypes.sl.df.filt.mb = filter(inv11.pca.karyotypes.size.df.filt, Pop == "MBNS")
+inv11.pca.karyotypes.sl.df.filt.hx = filter(inv11.pca.karyotypes.size.df.filt, Pop == "HXNS")
+summary(aov(StdLgth ~ ktype, data = inv11.pca.karyotypes.sl.df.filt.dx))
+summary(aov(StdLgth ~ ktype, data = inv11.pca.karyotypes.sl.df.filt.mb))
+summary(aov(StdLgth ~ ktype, data = inv11.pca.karyotypes.sl.df.filt.hx))
+
+#including sex as covariable
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_sex_data.csv", col_types = "ccdd")
+
+size.df$Pop <- ordered(size.df$Pop, levels = c("JIGA", "MCNC", "OINC", "CTVA", "PGNY", "DXMA", "MDME", "MBNS", "HXNS", "MIQB"))
+ggplot(data = size.df, aes(x=Pop, y=StdLgth, fill = Sex)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("firebrick","steelblue")) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Pop")
+
+ggplot(data = size.df, aes(x=Pop, y=StdLgth, fill = Sex)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("firebrick","steelblue")) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Pop")
+
+inv11.pca.karyotypes.size.df = inner_join(inv11.pca.karyotypes.df, size.df, by=c("Ind","Pop"))
+inv11.pca.karyotypes.size.df.filt = filter(inv11.pca.karyotypes.size.df, Pop == "DXMA" | Pop == "MBNS" | Pop == "HXNS"| Pop == "MDME")
+
+lmm.fact.inv11.sex <- lmer(StdLgth ~ ktype + (1 | Pop) + (1 | Sex), data = inv11.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.fact.inv11.sex)
+anova(lmm.fact.inv11.sex)
+report(lmm.fact.inv11.sex)
+effectsize(lmm.fact.inv11.sex)
+
+inv11.pca.karyotypes.size.df.filt$ktype <- ordered(inv11.pca.karyotypes.size.df.filt$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv11.pca.karyotypes.size.df.filt, aes(x=Sex, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv11 karyotype")
+```
+
+inv18:
+```{r, eval = FALSE}
+inv18.pca.karyotypes.df = read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Inv18_ind_karyotypes_allpops.csv")
+
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_data.csv", col_types = "ccdd")
+
+inv18.pca.karyotypes.size.df = inner_join(inv18.pca.karyotypes.df, size.df, by=c("Ind","Pop"))
+ggplot(data = inv18.pca.karyotypes.size.df, aes(x=Pop, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv18 karyotype")
+
+
+inv18.pca.karyotypes.size.df.filt = as_tibble(filter(inv18.pca.karyotypes.size.df, Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA"))
+
+lm.fact.inv18 <- lm(StdLgth ~ ktype, data = inv18.pca.karyotypes.size.df.filt)
+summary(lm.fact.inv18)
+
+lmm.fact.inv18 <- lmer(StdLgth ~ ktype + (1 | Pop), data = inv18.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.fact.inv18)
+anova(lmm.fact.inv18)
+report(lmm.fact.inv18)
+effectsize(lmm.fact.inv18)
+
+lmm.int.inv18 <- lmer(StdLgth ~ ktype.int + (1 | Pop), data = inv18.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.int.inv18)
+anova(lmm.int.inv18)
+report(lmm.int.inv18)
+effectsize(lmm.int.inv18)
+
+
+inv18.pca.karyotypes.size.df$ktype <- ordered(inv18.pca.karyotypes.size.df$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv18.pca.karyotypes.size.df, aes(x=ktype, y=StdLgth, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = T, colour = "white", size = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv18 karyotype")
+
+
+#including sex as covariable
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_sex_data.csv", col_types = "ccdd")
+
+inv18.pca.karyotypes.size.df = inner_join(inv18.pca.karyotypes.df, size.df, by=c("Ind","Pop"))
+inv18.pca.karyotypes.size.df.filt = filter(inv18.pca.karyotypes.size.df, Pop == "LRSC" | Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA")
+
+lmm.fact.inv18.sex <- lmer(StdLgth ~ ktype + (1 | Pop) + (1 | Sex), data = inv18.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.fact.inv18.sex)
+anova(lmm.fact.inv18.sex)
+report(lmm.fact.inv18.sex)
+effectsize(lmm.fact.inv18.sex)
+
+inv18.pca.karyotypes.size.df.filt$ktype <- ordered(inv18.pca.karyotypes.size.df.filt$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv18.pca.karyotypes.size.df.filt, aes(x=Sex, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv18 karyotype")
+```
+
+
+inv24: 
+```{r, eval = FALSE}
+inv24.pca.karyotypes.df = read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Inv24_ind_karyotypes_allpops.csv")
+
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_data.csv", col_types = "ccdd")
+
+inv24.pca.karyotypes.size.df = inner_join(inv24.pca.karyotypes.df, size.df, by=c("Ind","Pop"))
+ggplot(data = inv18.pca.karyotypes.size.df, aes(x=Pop, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv24 karyotype")
+
+
+inv24.pca.karyotypes.size.df.filt = filter(inv24.pca.karyotypes.size.df, Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA")
+
+lm.fact <- lm(StdLgth ~ ktype * Pop, data = inv24.pca.karyotypes.size.df.filt)
+summary(lm.fact)
+
+lmm.fact.inv24 <- lmer(StdLgth ~ ktype + (1 | Pop), data = inv24.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.fact.inv24)
+anova(lmm.fact.inv24)
+report(lmm.fact.inv24)
+effectsize(lmm.fact.inv24)
+
+lmm.int.inv24 <- lmer(StdLgth ~ as.numeric(ktype.int) + (1 | Pop), data = inv24.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.int.inv24)
+anova(lmm.int.inv24)
+report(lmm.int.inv24)
+effectsize(lmm.int.inv24)
+
+inv24.pca.karyotypes.size.df.filt.oinc = filter(inv24.pca.karyotypes.size.df, Pop == "CTVA")
+lm.int.inv24.oinc <- lm(StdLgth ~ ktype, data = inv24.pca.karyotypes.size.df.filt.oinc)
+summary(lm.int.inv24.oinc)
+
+lmm.fact <- lmer(StdLgth ~ ktype + (1 | Pop), data = inv24.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.fact)
+anova(lmm.fact)
+report(lmm.fact)
+effectsize(lmm.fact)
+
+
+
+inv24.pca.karyotypes.size.df.filt$ktype <- ordered(inv24.pca.karyotypes.size.df.filt$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv24.pca.karyotypes.size.df.filt, aes(x=ktype, y=StdLgth, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = T, colour = "white", size = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Inv24 karyotype")
+
+ggplot(data = inv24.pca.karyotypes.size.df.filt, aes(x=Pop, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  geom_jitter(aes(colour=Pop)) +
+  scale_fill_manual(values = c("#4f000b","#FFC100","#3d5a80")) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("Pop")
+
+#check if transcriptome based karyotyping gives the same results (res from Aryn)
+size.karyo.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/silverside_bodysize_data_transcriptome_karyotypes.csv", col_types = "cccccdd")
+
+inv24.pca.karyotypes.size.df = inner_join(inv24.pca.karyotypes.df, size.karyo.df, by=c("Ind","Pop"))
+inv24.pca.karyotypes.size.df.filt = filter(inv24.pca.karyotypes.size.df, Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA")
+
+inv24.pca.karyotypes.size.df.filt$congruence = if_else(condition = inv24.pca.karyotypes.size.df.filt$ktype == inv24.pca.karyotypes.size.df.filt$Chr24.trahetcriptome, T, F)
+
+
+#Include sex
+#including sex as covariable
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_sex_data.csv", col_types = "ccdd")
+
+inv24.pca.karyotypes.size.df = inner_join(inv24.pca.karyotypes.df, size.df, by=c("Ind","Pop"))
+inv24.pca.karyotypes.size.df.filt = filter(inv24.pca.karyotypes.size.df, Pop == "LRSC" | Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA")
+
+
+lmm.fact.inv24.sex <- lmer(StdLgth ~ ktype + (1 | Pop) + (1 | Sex), data = inv24.pca.karyotypes.size.df.filt, REML = F)
+summary(lmm.fact.inv24.sex)
+anova(lmm.fact.inv24.sex)
+report(lmm.fact.inv24.sex)
+effectsize(lmm.fact.inv24.sex)
+
+
+inv24.pca.karyotypes.size.df.filt$ktype <- ordered(inv24.pca.karyotypes.size.df.filt$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv24.pca.karyotypes.size.df.filt, aes(x=Sex, y=StdLgth, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Standard length") +
+  xlab("inv24 karyotype")
+```
+
+
+
+# Association between QTL-linked inversion genotype and vertebral number
+
+Run GLM for body size vs inversion karyotype for all three inversions separately and only for populations that are not fixed or nearly fixed for one of the karyotypes. 
+
+Run GLM for body size vs inversion karyotype for all three inversions separately and only for populations that are not fixed or nearly fixed for one of the karyotypes. 
+
+inv11: 
+```{r, eval = FALSE}
+inv11.pca.karyotypes.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Inv11_ind_karyotypes_allpops.csv")
+
+vn.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Silverside_Wild_PhenotypicTraits_sequenced.csv", col_types = "ccdd")
+
+
+inv11.pca.karyotypes.vn.df = inner_join(inv11.pca.karyotypes.df, vn.df, by=c("Ind"))
+
+inv11.pca.karyotypes.vn.df$Pop <- ordered(inv11.pca.karyotypes.vn.df$Pop, levels = c("JIGA", "OINC", "DXMA", "MDME", "MBNS", "HXNS"))
+ggplot(data = inv11.pca.karyotypes.vn.df, aes(x=Pop, y=Vertebtral_count, fill = Sex)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("firebrick","steelblue")) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Pop")
+
+inv11.pca.karyotypes.vn.df.filt = filter(inv11.pca.karyotypes.vn.df, Pop == "DXMA" | Pop == "MBNS" | Pop == "HXNS")
+ggplot(data = inv11.pca.karyotypes.vn.df.filt, aes(x=Length_std, y=Vertebtral_count, colour=Sex)) + geom_point()
+summary(lm(data = inv11.pca.karyotypes.vn.df.filt, Vertebtral_count~Length_std*Sex))
+inv11.pca.karyotypes.vn.df.filt2 = inv11.pca.karyotypes.vn.df.filt[,c(1,2,5,6,19,20)]
+inv11.pca.karyotypes.vn.df.filt2 = na.omit(inv11.pca.karyotypes.vn.df.filt2)
+
+lmm.fact.vn.inv11 <- lmer(Vertebtral_count ~ ktype + (1 | Pop), data = inv11.pca.karyotypes.vn.df.filt2, REML = F)
+summary(lmm.fact.vn.inv11)
+anova(lmm.fact.vn.inv11)
+report(lmm.fact.vn.inv11)
+effectsize(lmm.fact.vn.inv11)
+
+lmm.int.vn.inv11 <- lmer(Vertebtral_count ~ ktype.int + (1 | Pop), data = inv11.pca.karyotypes.vn.df.filt2, REML = F)
+summary(lmm.int.vn.inv11)
+anova(lmm.int.vn.inv11)
+report(lmm.int.vn.inv11)
+effectsize(lmm.int.vn.inv11)
+
+
+inv11.pca.karyotypes.vn.df.filt2$ktype <- ordered(inv11.pca.karyotypes.vn.df.filt2$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv11.pca.karyotypes.vn.df.filt2, aes(x=ktype, y=Vertebtral_count, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = F, colour = "white", size = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Inv11 karyotype")
+
+inv11.pca.karyotypes.vn.df.filt.dx = filter(inv11.pca.karyotypes.vn.df, Pop == "DXMA")
+inv11.pca.karyotypes.vn.df.filt.mb = filter(inv11.pca.karyotypes.vn.df, Pop == "MBNS")
+inv11.pca.karyotypes.vn.df.filt.hx = filter(inv11.pca.karyotypes.vn.df, Pop == "HXNS")
+inv11.pca.karyotypes.vn.df.filt.dx = inv11.pca.karyotypes.vn.df.filt.dx[,c(1,2,5,19)]
+inv11.pca.karyotypes.vn.df.filt.mb = inv11.pca.karyotypes.vn.df.filt.mb[,c(1,2,5,19)]
+inv11.pca.karyotypes.vn.df.filt.hx = inv11.pca.karyotypes.vn.df.filt.hx[,c(1,2,5,19)]
+inv11.pca.karyotypes.vn.df.filt.dx = na.omit(inv11.pca.karyotypes.vn.df.filt.dx)
+inv11.pca.karyotypes.vn.df.filt.mb = na.omit(inv11.pca.karyotypes.vn.df.filt.mb)
+inv11.pca.karyotypes.vn.df.filt.hx = na.omit(inv11.pca.karyotypes.vn.df.filt.hx)
+
+summary(aov(Vertebtral_count ~ ktype, data = inv11.pca.karyotypes.vn.df.filt.dx))
+summary(aov(Vertebtral_count ~ ktype, data = inv11.pca.karyotypes.vn.df.filt.mb))
+summary(aov(Vertebtral_count ~ ktype, data = inv11.pca.karyotypes.vn.df.filt.hx))
+
+ggplot(data = inv11.pca.karyotypes.vn.df.filt2, aes(x=ktype, y=Vertebtral_count, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = F, colour = "white", size = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Inv11 karyotype")
+
+ggplot(data = inv11.pca.karyotypes.vn.df.filt2, aes(x=Sex, y=Vertebtral_count, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Inv11 karyotype")
+```
+
+
+inv18: 
+```{r, eval = FALSE}
+inv18.pca.karyotypes.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Inv18_ind_karyotypes_allpops.csv")
+
+vn.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Silverside_Wild_PhenotypicTraits_sequenced.csv", col_types = "ccdd")
+
+inv18.pca.karyotypes.vn.df = inner_join(inv18.pca.karyotypes.df, vn.df, by=c("Ind"))
+inv18.pca.karyotypes.vn.df$VN.corr = (inv18.pca.karyotypes.vn.df$Vertebtral_count/inv18.pca.karyotypes.vn.df$Length_std)
+#inv18.pca.karyotypes.vn.df.filt = filter(inv18.pca.karyotypes.vn.df, Pop == "LRSC" | Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA")
+inv18.pca.karyotypes.vn.df.filt = filter(inv18.pca.karyotypes.vn.df, Pop == "OINC")
+
+#raw VN
+inv18.pca.karyotypes.vn.df.filt2 = inv18.pca.karyotypes.vn.df.filt[,c(1,2,5,6,19,20)]
+inv18.pca.karyotypes.vn.df.filt2 = na.omit(inv18.pca.karyotypes.vn.df.filt2)
+
+inv18.vn.aov = aov(data = inv18.pca.karyotypes.vn.df.filt2, formula = Vertebtral_count ~ ktype)
+summary(inv18.vn.aov)
+report(inv18.vn.aov)
+
+inv18.int.vn.aov = lm(data = inv18.pca.karyotypes.vn.df.filt2, formula = Vertebtral_count ~ ktype.int)
+summary(inv18.int.vn.aov)
+report(inv18.int.vn.aov)
+
+
+
+inv18.pca.karyotypes.vn.df.filt2$ktype <- ordered(inv18.pca.karyotypes.vn.df.filt2$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#FFC100","#3d5a80","#4f000b") 
+
+ggplot(data = inv18.pca.karyotypes.vn.df.filt2, aes(x=ktype, y=Vertebtral_count, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = F, colour = "white", size = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Inv18 karyotype")
+
+#incl Sex
+summary(aov(data = inv18.pca.karyotypes.vn.df.filt2, formula = Vertebtral_count ~ ktype*Sex))
+
+inv18.pca.karyotypes.vn.df.filt2$ktype <- ordered(inv18.pca.karyotypes.vn.df.filt2$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#FFC100","#3d5a80","#4f000b") 
+ggplot(data = inv18.pca.karyotypes.vn.df.filt2, aes(x=Sex, y=Vertebtral_count, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Inv18 karyotype")
+```
+
+
+inv24: 
+```{r, eval = FALSE}
+inv24.pca.karyotypes.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Inv24_ind_karyotypes_allpops.csv")
+
+vn.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Silverside_Wild_PhenotypicTraits_sequenced.csv", col_types = "ccdd")
+
+inv24.pca.karyotypes.vn.df = inner_join(inv24.pca.karyotypes.df, vn.df, by=c("Ind"))
+inv24.pca.karyotypes.vn.df$VN.corr = (inv24.pca.karyotypes.vn.df$Vertebtral_count/inv24.pca.karyotypes.vn.df$Length_std)
+#inv24.pca.karyotypes.vn.df.filt = filter(inv24.pca.karyotypes.vn.df, Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA")
+inv24.pca.karyotypes.vn.df.filt = filter(inv24.pca.karyotypes.vn.df,  Pop == "OINC")
+ggplot(data = inv24.pca.karyotypes.vn.df.filt, aes(x=Length_std, y=Vertebtral_count)) + geom_point()
+summary(lm(data = inv24.pca.karyotypes.vn.df.filt, Vertebtral_count~Length_std))
+
+inv24.pca.karyotypes.vn.df.filt2 = inv24.pca.karyotypes.vn.df.filt[,c(1,2,5,6,19,20)]
+inv24.pca.karyotypes.vn.df.filt2 = na.omit(inv24.pca.karyotypes.vn.df.filt2)
+
+inv24.vn.aov = aov(lm(data = inv24.pca.karyotypes.vn.df.filt2, formula = Vertebtral_count ~ ktype))
+summary(inv24.vn.aov)
+report(inv24.vn.aov)
+
+inv24.int.vn.aov = lm(data = inv24.pca.karyotypes.vn.df.filt2, formula = Vertebtral_count ~ ktype.int)
+summary(inv24.int.vn.aov)
+report(inv24.int.vn.aov)
+
+inv24.pca.karyotypes.vn.df.filt2$ktype <- ordered(inv24.pca.karyotypes.vn.df.filt2$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv24.pca.karyotypes.vn.df.filt2, aes(x=ktype, y=Vertebtral_count, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = T, colour = "white", vn = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Inv24 karyotype")
+
+
+
+lmm.fact.vn.inv24<- lmer(Vertebtral_count ~ ktype + (1 | Pop), data = inv24.pca.karyotypes.vn.df.filt, REML = F)
+summary(lmm.fact.vn.inv11)
+anova(lmm.fact.vn.inv11)
+report(lmm.fact.vn.inv11)
+effectsize(lmm.fact.vn.inv11)
+
+
+
+#incl Sex
+summary(aov(data = inv24.pca.karyotypes.vn.df.filt2, formula = Vertebtral_count ~ ktype*Sex))
+
+inv24.pca.karyotypes.vn.df.filt2$ktype <- ordered(inv24.pca.karyotypes.vn.df.filt2$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#FFC100","#3d5a80","#4f000b") 
+ggplot(data = inv24.pca.karyotypes.vn.df.filt2, aes(x=Sex, y=Vertebtral_count, fill = ktype)) +
+  geom_boxplot() +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("Inv24 karyotype")
+
+
+
+
+#size-corrected VN
+inv24.pca.karyotypes.vn.df.filt3 = inv24.pca.karyotypes.vn.df.filt[,c(1,2,5,26)]
+inv24.pca.karyotypes.vn.df.filt3 = na.omit(inv24.pca.karyotypes.vn.df.filt3)
+
+summary(aov(data = inv24.pca.karyotypes.vn.df.filt3, formula = VN.corr ~ ktype))
+
+inv24.pca.karyotypes.vn.df.filt3$ktype <- ordered(inv24.pca.karyotypes.vn.df.filt3$ktype, levels = c("south", "het", "north"))
+mme.pal <- c("#4f000b","#FFC100","#3d5a80") 
+
+ggplot(data = inv24.pca.karyotypes.vn.df.filt3, aes(x=ktype, y=VN.corr, fill = ktype)) +
+  geom_violin(colour = "white") +
+  geom_boxplot(width = 0.25, notch = F, colour = "white", size = 2) +
+  scale_fill_manual(values = mme.pal) +
+  theme_cowplot() +
+  ylab("Vertebtral Count (size-corrected)") +
+  xlab("Inv24 karyotype")
+
+
+
+#check if transcriptome based karyotyping gives the same results (res from Aryn)
+vn.karyo.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodyvn_associaton/silverside_bodyvn_data_transcriptome_karyotypes.csv", col_types = "cccccdd")
+
+inv24.pca.karyotypes.vn.df = inner_join(inv24.pca.karyotypes.df, vn.karyo.df, by=c("Ind","Pop"))
+inv24.pca.karyotypes.vn.df.filt = filter(inv24.pca.karyotypes.vn.df, Pop == "MCNC" | Pop == "OINC" | Pop =="CTVA")
+
+inv24.pca.karyotypes.vn.df.filt$congruence = if_else(condition = inv24.pca.karyotypes.vn.df.filt$ktype == inv24.pca.karyotypes.vn.df.filt$Chr24.trahetcriptome, T, F)
+```
+
+
+
+
+# HZAR Geographic cline analysis:
+
+
+### Fit sigmoidal clines to genotype and trait data:
+
+Genome-wide ancestry
+```{r}
+admK2 = npyLoad("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_woNorthern_thinnedsnps_noinv_k2.admix.Q.npy")
+admK2 = npyLoad("~/Desktop/pca_admix_mme_woNorthern_thinnedsnps_noinv_k2.admix.Q.npy")
+
+Ind.id <- read_delim("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", col_names = T, delim = "\t")
+Ind.id.noNorth = filter(Ind.id, Pop != "HXNS", Pop != "MAQU")
+Mme.thinned.noinv.nNorth.admix.ind = cbind(Ind.id.noNorth, admK2)
+pop <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+pop.filt = filter(pop, Pop != "HXNS", Pop != "MAQU")
+Mme.thinned.noinv.nNorth.admix.ind = left_join(Mme.thinned.noinv.nNorth.admix.ind, pop.filt, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Mme.thinned.noinv.nNorth.admix.ind = left_join(Mme.thinned.noinv.nNorth.admix.ind, dist, by="Pop")
+Mme.thinned.noinv.nNorth.admix.ind.df = Mme.thinned.noinv.nNorth.admix.ind[,c(2,3,7)]
+names(Mme.thinned.noinv.nNorth.admix.ind.df) = c("Pop", "K","Dist")
+Mme.thinned.noinv.nNorth.admix.ind.df$Dist = Mme.thinned.noinv.nNorth.admix.ind.df$Dist + 1
+Mme.thinned.noinv.nNorth.admix.ind.df$K = 1- Mme.thinned.noinv.nNorth.admix.ind.df$K
+
+#Estimate the mean admixture proportion per pop
+K.neutral.mean <- plyr::ddply(Mme.thinned.noinv.nNorth.admix.ind.df, c("Pop","Dist"),
+                              summarise, 
+                              K1.mean = mean(K), 
+                              K1.sd = sd(K))
+
+K.neutral.mean$Pop <- ordered(K.neutral.mean$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS"))
+
+#find the parameters for the equation
+plot(K.neutral.mean$Dist, K.neutral.mean$K1.mean)
+
+#Different way:
+summary(mod1<-nls(K1.mean ~ SSlogis( log(Dist), Asym, xmid, scal),data=K.neutral.mean))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(K.neutral.mean, plot(Dist,K1.mean))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="Genome-wide ancestry",xlab="Distance")
+with(K.neutral.mean, matpoints(Dist,K1.mean,pch=1))
+```
+
+Inv24
+```{r}
+Prop.S.Alleles.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/InvFreq_southernAllele_allpops.csv")
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+Prop.S.Alleles.df2.filt$Dist = Prop.S.Alleles.df2.filt$Dist + 1
+
+#find the parameters for the equation
+SS<-getInitial(Prop.S.Allele.chr24~SSlogis(Dist,alpha,xmid,scale),data=Prop.S.Alleles.df2.filt)
+#we used a different parametrization
+K_start<-SS["alpha"]
+R_start<-1/SS["scale"]
+N0_start<-SS["alpha"]/(exp(SS["xmid"]/SS["scale"])+1)
+#the formula for the model
+dist = Prop.S.Alleles.df2.filt$Dist
+inv24 = Prop.S.Alleles.df2.filt$Prop.S.Allele.chr24
+log_formula<-formula(inv24~K*N0*exp(R*dist)/(K+N0*(exp(R*dist)-1)))
+#fit the model
+m<-nls(log_formula,start=list(K=K_start,R=R_start,N0=N0_start))
+#estimated parameters
+summary(m)
+#get some estimation of goodness of fit
+cor(inv24,predict(m))
+plot(Prop.S.Alleles.df2.filt$Dist,Prop.S.Alleles.df2.filt$Prop.S.Allele.chr24)
+lines(dist,predict(m),col="red",lty=2,lwd=3)
+
+
+#Different way:
+summary(mod1<-nls(Prop.S.Allele.chr24 ~ SSlogis( log(Dist), Asym, xmid, scal),data=Prop.S.Alleles.df2.filt))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(Prop.S.Alleles.df2.filt, plot(Dist,Prop.S.Allele.chr24))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="inv24 frequency",xlab="Distance")
+with(Prop.S.Alleles.df2.filt, matpoints(Dist,Prop.S.Allele.chr24,pch=1))
+```
+
+
+Inv18
+```{r}
+Prop.S.Alleles.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/InvFreq_southernAllele_allpops.csv")
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+Prop.S.Alleles.df2.filt$Dist = Prop.S.Alleles.df2.filt$Dist + 1
+
+#find the parameters for the equation
+SS<-getInitial(Prop.S.Allele.chr18~SSlogis(Dist,alpha,xmid,scale),data=Prop.S.Alleles.df2.filt)
+#we used a different parametrization
+K_start<-SS["alpha"]
+R_start<-1/SS["scale"]
+N0_start<-SS["alpha"]/(exp(SS["xmid"]/SS["scale"])+1)
+#the formula for the model
+dist = Prop.S.Alleles.df2.filt$Dist
+inv18 = Prop.S.Alleles.df2.filt$Prop.S.Allele.chr18
+log_formula<-formula(inv18~K*N0*exp(R*dist)/(K+N0*(exp(R*dist)-1)))
+#fit the model
+m<-nls(log_formula,start=list(K=K_start,R=R_start,N0=N0_start))
+#estimated parameters
+summary(m)
+#get some estimation of goodness of fit
+cor(inv18,predict(m))
+plot(Prop.S.Alleles.df2.filt$Dist,Prop.S.Alleles.df2.filt$Prop.S.Allele.chr18)
+lines(dist,predict(m),col="red",lty=2,lwd=3)
+
+
+#Different way:
+summary(mod1<-nls(Prop.S.Allele.chr18 ~ SSlogis( log(Dist), Asym, xmid, scal),data=Prop.S.Alleles.df2.filt))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(Prop.S.Alleles.df2.filt, plot(Dist,Prop.S.Allele.chr18))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="inv18 frequency",xlab="Distance")
+with(Prop.S.Alleles.df2.filt, matpoints(Dist,Prop.S.Allele.chr18,pch=1))
+```
+
+Inv19
+```{r}
+Prop.S.Alleles.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/InvFreq_southernAllele_allpops.csv")
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+Prop.S.Alleles.df2.filt$Dist = Prop.S.Alleles.df2.filt$Dist + 1
+
+
+#Different way:
+summary(mod1<-nls(Prop.S.Allele.chr19 ~ SSlogis( log(Dist), Asym, xmid, scal),data=Prop.S.Alleles.df2.filt))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(Prop.S.Alleles.df2.filt, plot(Dist,Prop.S.Allele.chr19))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.9195))),
+type="l",lty=c(1,3,3),ylab="inv19 frequency",xlab="Distance")
+with(Prop.S.Alleles.df2.filt, matpoints(Dist,Prop.S.Allele.chr19,pch=1))
+```
+
+Inv11
+```{r}
+Prop.S.Alleles.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/InvFreq_southernAllele_allpops.csv")
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+Prop.S.Alleles.df2.filt$Dist = Prop.S.Alleles.df2.filt$Dist + 1
+
+
+#Different way:
+summary(mod1<-nls(Prop.S.Allele.chr11 ~ SSlogis( log(Dist), Asym, xmid, scal),data=Prop.S.Alleles.df2.filt))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(Prop.S.Alleles.df2.filt, plot(Dist,Prop.S.Allele.chr11))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.9115))),
+type="l",lty=c(1,3,3),ylab="inv11 frequency",xlab="Distance")
+with(Prop.S.Alleles.df2.filt, matpoints(Dist,Prop.S.Allele.chr11,pch=1))
+```
+
+Inv4
+```{r}
+Prop.S.Alleles.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/InvFreq_southernAllele_allpops.csv")
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+Prop.S.Alleles.df2.filt$Dist = Prop.S.Alleles.df2.filt$Dist + 1
+
+
+#Different way:
+summary(mod1<-nls(Prop.S.Allele.chr4 ~ SSlogis( log(Dist), Asym, xmid, scal),data=Prop.S.Alleles.df2.filt))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(Prop.S.Alleles.df2.filt, plot(Dist,Prop.S.Allele.chr4))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="inv4 frequency",xlab="Distance")
+with(Prop.S.Alleles.df2.filt, matpoints(Dist,Prop.S.Allele.chr4,pch=1))
+```
+
+Inv7
+```{r}
+Prop.S.Alleles.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/InvFreq_southernAllele_allpops.csv")
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+Prop.S.Alleles.df2.filt$Dist = Prop.S.Alleles.df2.filt$Dist + 1
+
+
+#Different way:
+summary(mod1<-nls(Prop.S.Allele.chr7 ~ SSlogis( log(Dist), Asym, xmid, scal),data=Prop.S.Alleles.df2.filt))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(Prop.S.Alleles.df2.filt, plot(Dist,Prop.S.Allele.chr7))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="inv7 frequency",xlab="Distance")
+with(Prop.S.Alleles.df2.filt, matpoints(Dist,Prop.S.Allele.chr7,pch=1))
+```
+
+Inv8
+```{r}
+Prop.S.Alleles.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_associaton/InvFreq_southernAllele_allpops.csv")
+#Add latitude from population information dataframe
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df, pop, by="Pop")
+#Add distance from JIGA to dataframe
+dist <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+Prop.S.Alleles.df2 = left_join(Prop.S.Alleles.df2, dist, by="Pop")
+Prop.S.Alleles.df2 = type_convert(Prop.S.Alleles.df2)
+Prop.S.Alleles.df2.filt = filter(Prop.S.Alleles.df2, Pop != "HXNS", Pop != "MAQU")
+Prop.S.Alleles.df2.filt$Dist = Prop.S.Alleles.df2.filt$Dist + 1
+
+
+#Different way:
+summary(mod1<-nls(Prop.S.Allele.chr8 ~ SSlogis( log(Dist), Asym, xmid, scal),data=Prop.S.Alleles.df2.filt))
+
+Dist_x <- seq(2, 2315, length = 100)
+
+predict(mod1, data.frame(Dist = Dist_x))
+
+with(Prop.S.Alleles.df2.filt, plot(Dist,Prop.S.Allele.chr8))
+
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+
+###plot points and curve plus ci's
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.985))),
+type="l",lty=c(1,3,3),ylab="inv8 frequency",xlab="Distance")
+with(Prop.S.Alleles.df2.filt, matpoints(Dist,Prop.S.Allele.chr8,pch=1))
+```
+
+
+### Fit sigmodal clines to phenotypic trait values
+
+Growth rate at 15ºC and 28ºC, and vertebral number
+```{r}
+mme.traits = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/phenotype_data/Mme_mean_traitvalues_hice_etal_2012.csv")
+mme.traits.noNorth = filter(mme.traits, pop != "HXNS", pop != "MAQU")
+names(mme.traits.noNorth)[1] = "Pop"
+
+#Add distance
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+mme.traits.noNorth = left_join(mme.traits.noNorth, dist, by="Pop")
+mme.traits.noNorth$Dist = mme.traits.noNorth$Dist + 1
+
+mme.traits.noNorth$Pop <- ordered(mme.traits.noNorth$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS"))
+
+#GR15
+plot(mme.traits.noNorth$Dist, mme.traits.noNorth$gr15.mean)
+summary(mod1<-nls(gr15.mean ~ SSlogis( log(Dist), Asym, xmid, scal),data=mme.traits.noNorth))
+Dist_x <- seq(0, 2315, length = 100)
+predict(mod1, data.frame(Dist = Dist_x))
+with(mme.traits.noNorth, plot(Dist,gr15.mean))
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="GR @ 15ºC",xlab="Distance")
+with(mme.traits.noNorth, matpoints(Dist,gr15.mean,pch=1))
+
+SS<-getInitial(gr15.mean~SSlogis(Dist,alpha,xmid,scale),data=mme.traits.noNorth)
+#we used a different parametrization
+K_start<-SS["alpha"]
+R_start<-1/SS["scale"]
+N0_start<-SS["alpha"]/(exp(SS["xmid"]/SS["scale"])+1)
+#the formula for the model
+dist = mme.traits.noNorth$Dist + 1
+gr15 = mme.traits.noNorth$gr15.mean
+log_formula<-formula(gr15~K*N0*exp(R*dist)/(K+N0*(exp(R*dist)-1)))
+#fit the model
+m<-nls(log_formula,start=list(K=K_start,R=R_start,N0=N0_start))
+#estimated parameters
+summary(m)
+#get some estimation of goodness of fit
+cor(gr15,predict(m))
+plot(mme.traits.noNorth$Dist,mme.traits.noNorth$gr15.mean)
+lines(dist,predict(m),col="red",lty=2,lwd=3)
+
+#GR28
+plot(mme.traits.noNorth$Dist, mme.traits.noNorth$gr28.mean)
+summary(mod1<-nls(gr28.mean ~ SSlogis( log(Dist), Asym, xmid, scal),data=mme.traits.noNorth))
+Dist_x <- seq(0, 2328, length = 100)
+predict(mod1, data.frame(Dist = Dist_x))
+with(mme.traits.noNorth, plot(Dist,gr28.mean))
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="GR @ 28ºC",xlab="Distance")
+with(mme.traits.noNorth, matpoints(Dist,gr28.mean,pch=1))
+
+SS<-getInitial(gr28.mean~SSlogis(Dist,alpha,xmid,scale),data=mme.traits.noNorth)
+#we used a different parametrization
+K_start<-SS["alpha"]
+R_start<-1/SS["scale"]
+N0_start<-SS["alpha"]/(exp(SS["xmid"]/SS["scale"])+1)
+#the formula for the model
+dist = mme.traits.noNorth$Dist + 1
+gr28 = mme.traits.noNorth$gr28.mean
+log_formula<-formula(gr28~K*N0*exp(R*dist)/(K+N0*(exp(R*dist)-1)))
+#fit the model
+m<-nls(log_formula,start=list(K=K_start,R=R_start,N0=N0_start))
+#estimated parameters
+summary(m)
+#get some estimation of goodness of fit
+cor(gr28,predict(m))
+plot(mme.traits.noNorth$Dist,mme.traits.noNorth$gr28.mean)
+lines(dist,predict(m),col="red",lty=2,lwd=3)
+
+#VN
+plot(mme.traits.noNorth$Dist, mme.traits.noNorth$vn.mean)
+summary(mod1<-nls(vn.mean ~ SSlogis( log(Dist), Asym, xmid, scal),data=mme.traits.noNorth))
+Dist_x <- seq(0, 2328, length = 100)
+predict(mod1, data.frame(Dist = Dist_x))
+with(mme.traits.noNorth, plot(Dist,vn.mean))
+lines(press_x, predict(mod1, data.frame(Dist = Dist_x)))
+se.fit <- sqrt(apply(attr(predict(mod1, data.frame(Dist = Dist_x)),"gradient"),1,
+function(x) sum(vcov(mod1)*outer(x,x))))
+matplot(Dist_x, predict(mod1, data.frame(Dist = Dist_x)) + outer(se.fit,qnorm(c(.5, .025,.975))),
+type="l",lty=c(1,3,3),ylab="VN",xlab="Distance")
+with(mme.traits.noNorth, matpoints(Dist,vn.mean,pch=1))
+
+#find the parameters for the equation
+SS<-getInitial(vn.mean~SSlogis(Dist,alpha,xmid,scale),data=mme.traits.noNorth)
+#we used a different parametrization
+K_start<-SS["alpha"]
+R_start<-1/SS["scale"]
+N0_start<-SS["alpha"]/(exp(SS["xmid"]/SS["scale"])+1)
+#the formula for the model
+dist = mme.traits.noNorth$Dist + 1
+VN = mme.traits.noNorth$vn.mean
+log_formula<-formula(VN~K*N0*exp(R*dist)/(K+N0*(exp(R*dist)-1)))
+#fit the model
+m<-nls(log_formula,start=list(K=K_start,R=R_start,N0=N0_start))
+#estimated parameters
+summary(m)
+#get some estimation of goodness of fit
+cor(VN,predict(m))
+plot(mme.traits.noNorth$Dist,mme.traits.noNorth$vn.mean)
+lines(dist,predict(m),col="red",lty=2,lwd=3)
+```
+
+
+
+Perform the cline analyses without samples from MAQU and HXNS as they have different genomic ancestries, complicating the interpretation of the results and comparability to neutral genetic ancestries. 
+
+```{r, eval = FALSE}
+setwd("/workdir/arne/results/selection/hzar_cline_analysis/cline-analysis")
+
+install.packages("hzar")
+library("hzar")
+install.packages("subplex")
+library("subplex")
+install.packages("doParallel")
+library("doParallel")
+install.packages("plotrix")
+library("plotrix")
+
+source("runHZAR.R")
+source("/workdir/arne/results/selection/hzar_cline_analysis/HZAR_Script_for_output_results.R")
+```
+
+
+Plot distribution in cline centres and cline widths ± 95% CIs
+```{r, eval = FALSE}
+hzar.inv.res = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/inversion_ancestry_clines/hzar_cline_analysis/hzar_inv_result_table_v1.csv")
+
+hzar.inv.res.filt = filter(hzar.inv.res, marker == "GWanc" | marker == "inv11" | marker == "inv18" | marker == "inv24")
+hzar.inv.res.filt$marker = with(hzar.inv.res.filt, reorder("inv11", "inv18", "inv24", "GWanc"))
+hzar.inv.res.filt$marker <- factor(hzar.inv.res.filt$marker,levels = c("inv11", "inv18", "inv24", "GWanc"))
+
+ggplot(data = hzar.inv.res.filt, aes(x = marker, y=center, ymin=lowerC, ymax=upperC, fill=marker)) + geom_pointrange(stroke=1, size=1, shape=21) + theme_cowplot()
+
+ggplot(data = hzar.inv.res.filt, aes(x = marker, y=width, ymin=lowerW, ymax=upperW, fill=marker)) + geom_pointrange(stroke=1, size=1, shape=21) + theme_cowplot()
+```
+
+
+Plot cline centres onto latitudinal changes in environmental variables
+```{r, eval=F}
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=lt_meanSST), method = "loess", span=0.5, colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=lt_max_SST), method = "loess", span=0.5, colour = "gray20") +
+  geom_smooth(aes(x=Dist, y=lt_minSST), method = "loess", span=0.5, colour = "gray70") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=center, colour = marker)) +
+  geom_vline(data = hzar.inv.res, aes(xintercept=lowerC, colour = marker), linetype = "dashed") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=upperC, colour = marker), linetype = "dashed")
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=seasonality_degC), method = "loess", span=0.5, colour = "gray70") +
+  geom_smooth(aes(x=Dist, y=BO2_temprange_ss, method = "loess", span=0.5), colour = "gray20") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=center, colour = marker)) +
+  geom_vline(data = hzar.inv.res, aes(xintercept=lowerC, colour = marker), linetype = "dashed") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=upperC, colour = marker), linetype = "dashed")
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=n.weeks.above12_meanSST, method = "loess", span=0.5), colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=n.weeks.above12_minSST, method = "loess", span=0.5), colour = "gray20")  +
+  geom_vline(data = hzar.inv.res, aes(xintercept=center, colour = marker)) +
+  geom_vline(data = hzar.inv.res, aes(xintercept=lowerC, colour = marker), linetype = "dashed") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=upperC, colour = marker), linetype = "dashed")
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=BO2_tempmean_ss, method = "loess", span=0.5), colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=BO2_temprange_ss, method = "loess", span=0.5), colour = "gray20") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=center, colour = marker)) +
+  geom_vline(data = hzar.inv.res, aes(xintercept=lowerC, colour = marker), linetype = "dashed") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=upperC, colour = marker), linetype = "dashed")
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=BO2_tempmean_ss, method = "loess", span=0.5), colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=BO2_tempmin_ss, method = "loess", span=0.5), colour = "gray20") +
+  geom_smooth(aes(x=Dist, y=BO2_tempmax_ss, method = "loess", span=0.5), colour = "gray70") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=center, colour = marker)) +
+  geom_vline(data = hzar.inv.res, aes(xintercept=lowerC, colour = marker), linetype = "dashed") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=upperC, colour = marker), linetype = "dashed")
+
+
+pca.env.pcs = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata_PCAscores.csv")
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+names(dist)[1] = "pop"
+pca.env.pcs.dist = left_join(pca.env.pcs, dist, by="pop")
+pca.env.pcs.dist$Dist = pca.env.pcs.dist$Dist + 1
+
+ggplot(data = pca.env.pcs.dist) +
+  geom_smooth(aes(x=Dist, y=-PC1), method = "loess", span=0.5, colour = "firebrick") + 
+  geom_smooth(aes(x=Dist, y=PC2), method = "loess", span=0.5, colour = "gray30") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=center, colour = marker)) +
+  geom_vline(data = hzar.inv.res, aes(xintercept=lowerC, colour = marker), linetype = "dashed") +
+  geom_vline(data = hzar.inv.res, aes(xintercept=upperC, colour = marker), linetype = "dashed")
+```
+
+
+
+
+
+
+Compare clines between inversions and genome-wide ancestry: use script from https://github.com/seanstankowski/Heliconius_MS/blob/master/Comaring_linear_and_quadratic_fits.txt
+
+Inv24 vs GWancestry
+```{r, eval=F}
+#Make dataframe for all inversions and ancestry
+data.df = inner_join(K.neutral.mean, Prop.S.Alleles.df2.filt, by=c("Pop","Dist"))
+
+	###define trait variables, x and y
+y_trait <- data.df$K1.mean ##define a variable for yb...
+y_trait2 <- y_trait^2 ## ...and y squared 
+x_trait <- data.df$Prop.S.Allele.chr24 ##define x_trait
+	
+##define and fit the quadratic
+quadratic.model <- lm(x_trait ~ y_trait + y_trait2) ## define and fit the quadratic model
+## Solve a vector of values predicted from values so  plot the curve
+min <- min(y_trait, na.rm = T) ## find the min of trait_x
+max <- max(y_trait, na.rm = T) ## find the max of trait_x
+y_trait_values <- seq(min, max, 0.001) ##make the vector of 1 k numbers spanning x_min and x_max
+predictedvalues <- predict(quadratic.model,list(y_trait=y_trait_values, y_trait2=y_trait_values^2)) ##predict using quadratic model
+## make a plot
+plot(x_trait,y_trait, xlab = "Southern Ancestry", ylab = "Frequency of inv24", cex=2)
+lines(predictedvalues, y_trait_values, col = "red", lwd = 3) ## add the quadratic fit to 	
+### Linear_Fit
+linear.model <- lm(x_trait~y_trait)
+abline(lm(y_trait~x_trait),  col = "blue", lwd = 3) ## add linear model to the plot
+### Summary of model fits	
+summary(linear.model)
+summary(quadratic.model) ## summary of the quadratic model
+### Compare models using F-ratio with anova		
+anova(linear.model, quadratic.model)
+```
+
+Inv19 vs GWancestry
+```{r, eval=F}
+#Make dataframe for all inversions and ancestry
+data.df = inner_join(K.neutral.mean, Prop.S.Alleles.df2.filt, by=c("Pop","Dist"))
+
+	###define trait variables, x and y
+y_trait <- data.df$K1.mean ##define a variable for yb...
+y_trait2 <- y_trait^2 ## ...and y squared 
+x_trait <- data.df$Prop.S.Allele.chr19 ##define x_trait
+	
+##define and fit the quadratic
+quadratic.model <- lm(x_trait ~ y_trait + y_trait2) ## define and fit the quadratic model
+## Solve a vector of values predicted from values so  plot the curve
+min <- min(y_trait, na.rm = T) ## find the min of trait_x
+max <- max(y_trait, na.rm = T) ## find the max of trait_x
+y_trait_values <- seq(min, max, 0.001) ##make the vector of 1 k numbers spanning x_min and x_max
+predictedvalues <- predict(quadratic.model,list(y_trait=y_trait_values, y_trait2=y_trait_values^2)) ##predict using quadratic model
+## make a plot
+plot(x_trait,y_trait, xlab = "Southern Ancestry", ylab = "Frequency of inv19", cex=2)
+lines(predictedvalues, y_trait_values, col = "red", lwd = 3) ## add the quadratic fit to 	
+### Linear_Fit
+linear.model <- lm(x_trait~y_trait)
+abline(lm(y_trait~x_trait),  col = "blue", lwd = 3) ## add linear model to the plot
+### Summary of model fits	
+summary(linear.model)
+summary(quadratic.model) ## summary of the quadratic model
+### Compare models using F-ratio with anova		
+anova(linear.model, quadratic.model)
+```
+
+Inv18 vs GWancestry
+```{r, eval=F}
+#Make dataframe for all inversions and ancestry
+data.df = inner_join(K.neutral.mean, Prop.S.Alleles.df2.filt, by=c("Pop","Dist"))
+
+	###define trait variables, x and y
+y_trait <- data.df$K1.mean ##define a variable for yb...
+y_trait2 <- y_trait^2 ## ...and y squared 
+x_trait <- data.df$Prop.S.Allele.chr18 ##define x_trait
+	
+##define and fit the quadratic
+quadratic.model <- lm(x_trait ~ y_trait + y_trait2) ## define and fit the quadratic model
+## Solve a vector of values predicted from values so  plot the curve
+min <- min(y_trait, na.rm = T) ## find the min of trait_x
+max <- max(y_trait, na.rm = T) ## find the max of trait_x
+y_trait_values <- seq(min, max, 0.001) ##make the vector of 1 k numbers spanning x_min and x_max
+predictedvalues <- predict(quadratic.model,list(y_trait=y_trait_values, y_trait2=y_trait_values^2)) ##predict using quadratic model
+## make a plot
+plot(x_trait,y_trait, xlab = "Southern Ancestry", ylab = "Frequency of inv18", cex=2)
+lines(predictedvalues, y_trait_values, col = "red", lwd = 3) ## add the quadratic fit to 	
+### Linear_Fit
+linear.model <- lm(x_trait~y_trait)
+abline(lm(y_trait~x_trait),  col = "blue", lwd = 3) ## add linear model to the plot
+### Summary of model fits	
+summary(linear.model)
+summary(quadratic.model) ## summary of the quadratic model
+### Compare models using F-ratio with anova		
+anova(linear.model, quadratic.model)
+```
+
+
+Inv11 vs GWancestry
+```{r, eval=F}
+#Make dataframe for all inversions and ancestry
+data.df = inner_join(K.neutral.mean, Prop.S.Alleles.df2.filt, by=c("Pop","Dist"))
+
+	###define trait variables, x and y
+y_trait <- data.df$K1.mean ##define a variable for yb...
+y_trait2 <- y_trait^2 ## ...and y squared 
+x_trait <- data.df$Prop.S.Allele.chr11 ##define x_trait
+	
+##define and fit the quadratic
+quadratic.model <- lm(x_trait ~ y_trait + y_trait2) ## define and fit the quadratic model
+## Solve a vector of values predicted from values so  plot the curve
+min <- min(y_trait, na.rm = T) ## find the min of trait_x
+max <- max(y_trait, na.rm = T) ## find the max of trait_x
+y_trait_values <- seq(min, max, 0.001) ##make the vector of 1 k numbers spanning x_min and x_max
+predictedvalues <- predict(quadratic.model,list(y_trait=y_trait_values, y_trait2=y_trait_values^2)) ##predict using quadratic model
+## make a plot
+plot(x_trait,y_trait, xlab = "Southern Ancestry", ylab = "Frequency of inv11", cex=2)
+lines(predictedvalues, y_trait_values, col = "red", lwd = 3) ## add the quadratic fit to 	
+### Linear_Fit
+linear.model <- lm(x_trait~y_trait)
+abline(lm(y_trait~x_trait),  col = "blue", lwd = 3) ## add linear model to the plot
+### Summary of model fits	
+summary(linear.model)
+summary(quadratic.model) ## summary of the quadratic model
+### Compare models using F-ratio with anova		
+anova(linear.model, quadratic.model)
+```
+
+
+Inv8 vs GWancestry
+```{r, eval=F}
+#Make dataframe for all inversions and ancestry
+data.df = inner_join(K.neutral.mean, Prop.S.Alleles.df2.filt, by=c("Pop","Dist"))
+
+	###define trait variables, x and y
+y_trait <- data.df$K1.mean ##define a variable for yb...
+y_trait2 <- y_trait^2 ## ...and y squared 
+x_trait <- data.df$Prop.S.Allele.chr8 ##define x_trait
+	
+##define and fit the quadratic
+quadratic.model <- lm(x_trait ~ y_trait + y_trait2) ## define and fit the quadratic model
+## Solve a vector of values predicted from values so  plot the curve
+min <- min(y_trait, na.rm = T) ## find the min of trait_x
+max <- max(y_trait, na.rm = T) ## find the max of trait_x
+y_trait_values <- seq(min, max, 0.001) ##make the vector of 1 k numbers spanning x_min and x_max
+predictedvalues <- predict(quadratic.model,list(y_trait=y_trait_values, y_trait2=y_trait_values^2)) ##predict using quadratic model
+## make a plot
+plot(x_trait,y_trait, xlab = "Southern Ancestry", ylab = "Frequency of inv8", cex=2)
+lines(predictedvalues, y_trait_values, col = "red", lwd = 3) ## add the quadratic fit to 	
+### Linear_Fit
+linear.model <- lm(x_trait~y_trait)
+abline(lm(y_trait~x_trait),  col = "blue", lwd = 3) ## add linear model to the plot
+### Summary of model fits	
+summary(linear.model)
+summary(quadratic.model) ## summary of the quadratic model
+### Compare models using F-ratio with anova		
+anova(linear.model, quadratic.model)
+```
+
+
+Inv7 vs GWancestry
+```{r, eval=F}
+#Make dataframe for all inversions and ancestry
+data.df = inner_join(K.neutral.mean, Prop.S.Alleles.df2.filt, by=c("Pop","Dist"))
+
+	###define trait variables, x and y
+y_trait <- data.df$K1.mean ##define a variable for yb...
+y_trait2 <- y_trait^2 ## ...and y squared 
+x_trait <- data.df$Prop.S.Allele.chr7 ##define x_trait
+	
+##define and fit the quadratic
+quadratic.model <- lm(x_trait ~ y_trait + y_trait2) ## define and fit the quadratic model
+## Solve a vector of values predicted from values so  plot the curve
+min <- min(y_trait, na.rm = T) ## find the min of trait_x
+max <- max(y_trait, na.rm = T) ## find the max of trait_x
+y_trait_values <- seq(min, max, 0.001) ##make the vector of 1 k numbers spanning x_min and x_max
+predictedvalues <- predict(quadratic.model,list(y_trait=y_trait_values, y_trait2=y_trait_values^2)) ##predict using quadratic model
+## make a plot
+plot(x_trait,y_trait, xlab = "Southern Ancestry", ylab = "Frequency of inv7", cex=2)
+lines(predictedvalues, y_trait_values, col = "red", lwd = 3) ## add the quadratic fit to 	
+### Linear_Fit
+linear.model <- lm(x_trait~y_trait)
+abline(lm(y_trait~x_trait),  col = "blue", lwd = 3) ## add linear model to the plot
+### Summary of model fits	
+summary(linear.model)
+summary(quadratic.model) ## summary of the quadratic model
+### Compare models using F-ratio with anova		
+anova(linear.model, quadratic.model)
+```
+
+
+Inv4 vs GWancestry
+```{r, eval=F}
+#Make dataframe for all inversions and ancestry
+data.df = inner_join(K.neutral.mean, Prop.S.Alleles.df2.filt, by=c("Pop","Dist"))
+
+	###define trait variables, x and y
+y_trait <- data.df$K1.mean ##define a variable for yb...
+y_trait2 <- y_trait^2 ## ...and y squared 
+x_trait <- data.df$Prop.S.Allele.chr4 ##define x_trait
+	
+##define and fit the quadratic
+quadratic.model <- lm(x_trait ~ y_trait + y_trait2) ## define and fit the quadratic model
+## Solve a vector of values predicted from values so  plot the curve
+min <- min(y_trait, na.rm = T) ## find the min of trait_x
+max <- max(y_trait, na.rm = T) ## find the max of trait_x
+y_trait_values <- seq(min, max, 0.001) ##make the vector of 1 k numbers spanning x_min and x_max
+predictedvalues <- predict(quadratic.model,list(y_trait=y_trait_values, y_trait2=y_trait_values^2)) ##predict using quadratic model
+## make a plot
+plot(x_trait,y_trait, xlab = "Southern Ancestry", ylab = "Frequency of inv4", cex=2)
+lines(predictedvalues, y_trait_values, col = "red", lwd = 3) ## add the quadratic fit to 	
+### Linear_Fit
+linear.model <- lm(x_trait~y_trait)
+abline(lm(y_trait~x_trait),  col = "blue", lwd = 3) ## add linear model to the plot
+### Summary of model fits	
+summary(linear.model)
+summary(quadratic.model) ## summary of the quadratic model
+### Compare models using F-ratio with anova		
+anova(linear.model, quadratic.model)
+```
+
+
+# Estimating strength of selection on inversions
+```{r, eval=F}
+s* = [(1.782 * o)/w]^2
+
+s* is mean strength of effective selection
+o is dispersal distance (#0 - 50km for silverside in year class 1; estimate from Clarke et al. 2010 Ecology, 91(12))
+w is cline width
+
+
+
+#Inv24
+o=5
+w=697.4756005
+LowW=574.3576308
+HighW=850.4538859
+s.inv24.mean = ((1.782*o)/w)^2
+s.inv24.low = ((1.782*o)/LowW)^2
+s.inv24.high = ((1.782*o)/HighW)^2
+
+#Inv19
+o=25
+w=594.519109		
+LowW=493.185326
+HighW=717.0136248
+s.inv19.mean = ((1.782*o)/w)^2
+s.inv19.low = ((1.782*o)/LowW)^2
+s.inv19.high = ((1.782*o)/HighW)^2
+
+#Inv18
+o=25
+w=428.0151153		
+LowW=301.4150328
+HighW=585.0208771	
+s.inv18.mean = ((1.782*o)/w)^2
+s.inv18.low = ((1.782*o)/LowW)^2
+s.inv18.high = ((1.782*o)/HighW)^2
+
+#Inv11
+o=25
+w=339.5763887		
+LowW=240.6184577
+HighW=494.6413334
+s.inv11.mean = ((1.782*o)/w)^2
+s.inv11.low = ((1.782*o)/LowW)^2
+s.inv11.high = ((1.782*o)/HighW)^2
+
+#Inv8
+o=25
+w=280.6710454		
+LowW=67.22965391
+HighW=623.6772554
+s.inv8.mean = ((1.782*o)/w)^2
+s.inv8.low = ((1.782*o)/LowW)^2
+s.inv8.high = ((1.782*o)/HighW)^2
+
+#Inv7
+o=25
+w=656.8538051				
+LowW=536.642637
+HighW=801.7204709
+s.inv7.mean = ((1.782*o)/w)^2
+s.inv7.low = ((1.782*o)/LowW)^2
+s.inv7.high = ((1.782*o)/HighW)^2
+
+#Inv4
+o=25
+w=702.1073476					
+LowW=589.1537033
+HighW=839.5015785
+s.inv4.mean = ((1.782*o)/w)^2
+s.inv4.low = ((1.782*o)/LowW)^2
+s.inv4.high = ((1.782*o)/HighW)^2
+```
+
+
+## Estimte s* for inversions but permutate over different dispersal distances
+```{r, eval=F}
+#Create a fake negative binomial distribution between 0 and 50
+n = rnorm(1000, 0, 15)
+hist(n,                                          # Plot of randomly drawn nbinom density
+     breaks = 100,
+     main = "")
+n.df = as.data.frame(n)
+n.df = abs(n.df)
+hist(n.df$n,                                          # Plot of randomly drawn nbinom density
+     breaks = 100,
+     main = "")
+mean(n.df$n)
+
+#Iterate over dispersal distances drawn from distribution. 1000 iterations
+
+## Inv24
+n.vec = c(n.df$n)
+x <- 1
+z <- 1000 #number of permutations
+w=697.4756005
+repeat {
+  o <- sample(n.vec, 1, replace = T) #resampling step
+  s.inv24.mean = (((1.782*o)/w)^2)
+  write(paste(s.inv24.mean), "~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv24_out.txt", append=T, ) # append output to file. If you re-run the script, you have to delete this file first from the folder or rename the output file
+  x = x+1 #add next round
+  if (x == z){ #stop if reaches number of permutations (z)
+    break
+  }
+}
+
+#read output script for downstream analyses
+perm.sel.inv24 <- read.table("~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv24_out.txt") 
+hist(perm.sel.inv24$V1)
+mean.s.inv24 = mean(perm.sel.inv24$V1)
+sd.s.inv24 = sd(perm.sel.inv24$V1)
+CI_z <- function (x, ci = 0.95)
+{
+`%>%` <- magrittr::`%>%`
+standard_deviation <- sd(x)
+sample_size <- length(x)
+Margin_Error <- abs(qnorm((1-ci)/2))* standard_deviation/sqrt(sample_size)
+df_out <- data.frame( sample_size=length(x), Mean=mean(x), sd=sd(x),
+Margin_Error=Margin_Error,
+'CI lower limit'=(mean(x) - Margin_Error),
+'CI Upper limit'=(mean(x) + Margin_Error)) %>%
+tidyr::pivot_longer(names_to = "Measurements", values_to ="values", 1:6 )
+return(df_out)
+}
+CI_z(perm.sel.inv24$V1, ci = 0.95)
+
+
+## inv19
+n.vec = c(n.df$n)
+x <- 1
+z <- 1000 #number of permutations
+w=594.519109
+repeat {
+  o <- sample(n.vec, 1, replace = T) #resampling step
+  s.inv19.mean = (((1.782*o)/w)^2)
+  write(paste(s.inv19.mean), "~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv19_out.txt", append=T, ) # append output to file. If you re-run the script, you have to delete this file first from the folder or rename the output file
+  x = x+1 #add next round
+  if (x == z){ #stop if reaches number of permutations (z)
+    break
+  }
+}
+
+#read output script for downstream analyses
+perm.sel.inv19 <- read.table("~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv19_out.txt") 
+hist(perm.sel.inv19$V1)
+mean.s.inv19 = mean(perm.sel.inv19$V1)
+sd.s.inv19 = sd(perm.sel.inv19$V1)
+CI_z <- function (x, ci = 0.95)
+{
+`%>%` <- magrittr::`%>%`
+standard_deviation <- sd(x)
+sample_size <- length(x)
+Margin_Error <- abs(qnorm((1-ci)/2))* standard_deviation/sqrt(sample_size)
+df_out <- data.frame( sample_size=length(x), Mean=mean(x), sd=sd(x),
+Margin_Error=Margin_Error,
+'CI lower limit'=(mean(x) - Margin_Error),
+'CI Upper limit'=(mean(x) + Margin_Error)) %>%
+tidyr::pivot_longer(names_to = "Measurements", values_to ="values", 1:6 )
+return(df_out)
+}
+CI_z(perm.sel.inv19$V1, ci = 0.95)
+
+## inv18
+n.vec = c(n.df$n)
+x <- 1
+z <- 1000 #number of permutations
+w=428.0151153
+repeat {
+  o <- sample(n.vec, 1, replace = T) #resampling step
+  s.inv18.mean = (((1.782*o)/w)^2)
+  write(paste(s.inv18.mean), "~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv18_out.txt", append=T, ) # append output to file. If you re-run the script, you have to delete this file first from the folder or rename the output file
+  x = x+1 #add next round
+  if (x == z){ #stop if reaches number of permutations (z)
+    break
+  }
+}
+
+#read output script for downstream analyses
+perm.sel.inv18 <- read.table("~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv18_out.txt") 
+hist(perm.sel.inv18$V1)
+mean.s.inv18 = mean(perm.sel.inv18$V1)
+sd.s.inv18 = sd(perm.sel.inv18$V1)
+CI_z <- function (x, ci = 0.95)
+{
+`%>%` <- magrittr::`%>%`
+standard_deviation <- sd(x)
+sample_size <- length(x)
+Margin_Error <- abs(qnorm((1-ci)/2))* standard_deviation/sqrt(sample_size)
+df_out <- data.frame( sample_size=length(x), Mean=mean(x), sd=sd(x),
+Margin_Error=Margin_Error,
+'CI lower limit'=(mean(x) - Margin_Error),
+'CI Upper limit'=(mean(x) + Margin_Error)) %>%
+tidyr::pivot_longer(names_to = "Measurements", values_to ="values", 1:6 )
+return(df_out)
+}
+CI_z(perm.sel.inv18$V1, ci = 0.95)
+
+
+## inv11
+n.vec = c(n.df$n)
+x <- 1
+z <- 1000 #number of permutations
+w=339.5763887
+repeat {
+  o <- sample(n.vec, 1, replace = T) #resampling step
+  s.inv11.mean = (((1.782*o)/w)^2)
+  write(paste(s.inv11.mean), "~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv11_out.txt", append=T, ) # append output to file. If you re-run the script, you have to delete this file first from the folder or rename the output file
+  x = x+1 #add next round
+  if (x == z){ #stop if reaches number of permutations (z)
+    break
+  }
+}
+
+#read output script for downstream analyses
+perm.sel.inv11 <- read.table("~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv11_out.txt") 
+hist(perm.sel.inv11$V1)
+mean.s.inv11 = mean(perm.sel.inv11$V1)
+sd.s.inv11 = sd(perm.sel.inv11$V1)
+CI_z <- function (x, ci = 0.95)
+{
+`%>%` <- magrittr::`%>%`
+standard_deviation <- sd(x)
+sample_size <- length(x)
+Margin_Error <- abs(qnorm((1-ci)/2))* standard_deviation/sqrt(sample_size)
+df_out <- data.frame( sample_size=length(x), Mean=mean(x), sd=sd(x),
+Margin_Error=Margin_Error,
+'CI lower limit'=(mean(x) - Margin_Error),
+'CI Upper limit'=(mean(x) + Margin_Error)) %>%
+tidyr::pivot_longer(names_to = "Measurements", values_to ="values", 1:6 )
+return(df_out)
+}
+CI_z(perm.sel.inv11$V1, ci = 0.95)
+
+
+## inv8
+n.vec = c(n.df$n)
+x <- 1
+z <- 1000 #number of permutations
+w=280.6710454
+repeat {
+  o <- sample(n.vec, 1, replace = T) #resampling step
+  s.inv8.mean = (((1.782*o)/w)^2)
+  write(paste(s.inv8.mean), "~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv8_out.txt", append=T, ) # append output to file. If you re-run the script, you have to delete this file first from the folder or rename the output file
+  x = x+1 #add next round
+  if (x == z){ #stop if reaches number of permutations (z)
+    break
+  }
+}
+
+#read output script for downstream analyses
+perm.sel.inv8 <- read.table("~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv8_out.txt") 
+hist(perm.sel.inv8$V1)
+mean.s.inv8 = mean(perm.sel.inv8$V1)
+sd.s.inv8 = sd(perm.sel.inv8$V1)
+CI_z <- function (x, ci = 0.95)
+{
+`%>%` <- magrittr::`%>%`
+standard_deviation <- sd(x)
+sample_size <- length(x)
+Margin_Error <- abs(qnorm((1-ci)/2))* standard_deviation/sqrt(sample_size)
+df_out <- data.frame( sample_size=length(x), Mean=mean(x), sd=sd(x),
+Margin_Error=Margin_Error,
+'CI lower limit'=(mean(x) - Margin_Error),
+'CI Upper limit'=(mean(x) + Margin_Error)) %>%
+tidyr::pivot_longer(names_to = "Measurements", values_to ="values", 1:6 )
+return(df_out)
+}
+CI_z(perm.sel.inv8$V1, ci = 0.95)
+
+## inv7
+n.vec = c(n.df$n)
+x <- 1
+z <- 1000 #number of permutations
+w=656.8538051
+repeat {
+  o <- sample(n.vec, 1, replace = T) #resampling step
+  s.inv7.mean = (((1.782*o)/w)^2)
+  write(paste(s.inv7.mean), "~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv7_out.txt", append=T, ) # append output to file. If you re-run the script, you have to delete this file first from the folder or rename the output file
+  x = x+1 #add next round
+  if (x == z){ #stop if reaches number of permutations (z)
+    break
+  }
+}
+
+#read output script for downstream analyses
+perm.sel.inv7 <- read.table("~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv7_out.txt") 
+hist(perm.sel.inv7$V1)
+mean.s.inv7 = mean(perm.sel.inv7$V1)
+sd.s.inv7 = sd(perm.sel.inv7$V1)
+CI_z <- function (x, ci = 0.95)
+{
+`%>%` <- magrittr::`%>%`
+standard_deviation <- sd(x)
+sample_size <- length(x)
+Margin_Error <- abs(qnorm((1-ci)/2))* standard_deviation/sqrt(sample_size)
+df_out <- data.frame( sample_size=length(x), Mean=mean(x), sd=sd(x),
+Margin_Error=Margin_Error,
+'CI lower limit'=(mean(x) - Margin_Error),
+'CI Upper limit'=(mean(x) + Margin_Error)) %>%
+tidyr::pivot_longer(names_to = "Measurements", values_to ="values", 1:6 )
+return(df_out)
+}
+CI_z(perm.sel.inv7$V1, ci = 0.95)
+
+
+## inv4
+n.vec = c(n.df$n)
+x <- 1
+z <- 1000 #number of permutations
+w=702.1073476
+repeat {
+  o <- sample(n.vec, 1, replace = T) #resampling step
+  s.inv4.mean = (((1.782*o)/w)^2)
+  write(paste(s.inv4.mean), "~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv4_out.txt", append=T, ) # append output to file. If you re-run the script, you have to delete this file first from the folder or rename the output file
+  x = x+1 #add next round
+  if (x == z){ #stop if reaches number of permutations (z)
+    break
+  }
+}
+
+#read output script for downstream analyses
+perm.sel.inv4 <- read.table("~/Dropbox/Cornell_Postdoc/analysis/results/perm_cline_selection_inv4_out.txt") 
+hist(perm.sel.inv4$V1)
+mean.s.inv4 = mean(perm.sel.inv4$V1)
+sd.s.inv4 = sd(perm.sel.inv4$V1)
+CI_z <- function (x, ci = 0.95)
+{
+`%>%` <- magrittr::`%>%`
+standard_deviation <- sd(x)
+sample_size <- length(x)
+Margin_Error <- abs(qnorm((1-ci)/2))* standard_deviation/sqrt(sample_size)
+df_out <- data.frame( sample_size=length(x), Mean=mean(x), sd=sd(x),
+Margin_Error=Margin_Error,
+'CI lower limit'=(mean(x) - Margin_Error),
+'CI Upper limit'=(mean(x) + Margin_Error)) %>%
+tidyr::pivot_longer(names_to = "Measurements", values_to ="values", 1:6 )
+return(df_out)
+}
+CI_z(perm.sel.inv4$V1, ci = 0.95)
+```
+
+
+
+
+
+#Plot inversion cline widths, cline centres and selection coefficient for each inversion
+
+```{r, eval=F}
+hzar.res.df = read_csv("~/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/inversion_ancestry_clines/hzar_cline_analysis/hzar_inv_result_table_v1.csv")
+
+hzar.res.df$marker <- ordered(hzar.res.df$marker, levels = c("inv4", "inv7", "inv8", "inv11", "inv18", "inv19", "inv24", "GWanc"))
+
+c.plot = ggplot(data = hzar.res.df, aes(x=marker, y=center, colour=marker)) +
+  geom_point() +
+  geom_pointrange(aes(ymin=center-lowerC, ymax=center+upperC)) +
+  scale_colour_manual(values = c("#941322","#FF7B00","#468100","#007FFF","#8C3FD3","#FFC400","#00C5FF","grey60")) +
+  ylab("cline center [km]") +
+  theme_cowplot() +
+  theme(legend.position="none",
+        axis.title.x = element_blank())
+  
+w.plot = ggplot(data = hzar.res.df, aes(x=marker, y=width, colour=marker)) +
+  geom_point() +
+  geom_pointrange(aes(ymin=width-lowerW, ymax=width+upperW)) +
+  scale_colour_manual(values = c("#941322","#FF7B00","#468100","#007FFF","#8C3FD3","#FFC400","#00C5FF","grey60")) +
+  ylab("cline width [km]") +
+  theme_cowplot() +
+  theme(legend.position="none",
+        axis.title.x = element_blank())
+
+s.plot = ggplot(data = hzar.res.df, aes(x=marker, y=s.mean.perm, colour=marker)) +
+  geom_point() +
+  geom_pointrange(aes(ymin=s.mean.perm-s.mean.perm.CI.lower, ymax=s.mean.perm+s.mean.perm.CI.upper)) +
+  scale_colour_manual(values = c("#941322","#FF7B00","#468100","#007FFF","#8C3FD3","#FFC400","#00C5FF","grey60")) +
+  ylab("s*") +
+  xlab("Genomic region") +
+  theme_cowplot() +
+  theme(legend.position="none")
+
+cline.plots = c.plot / w.plot / s.plot
+```
+
+
+
+
+
+### Cline on chr13 and chr17
+
+
+#### Chr13
+```{r message=F, warning=F}
+Ind.id <- read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+```
+
+```{bash eval=F, include=T}
+## subset outlier
+cat mme_all_filtsnps_beagleGL_Mme_chr13.beagle | sed -n -e '1p' | awk '/20100602/,/22294270/' | gzip > mme_all_filtsnps_beagleGL_Mme_chr13.VNqtl.beagle.gz
+cat mme_all_filtsnps_beagleGL_Mme_chr13.beagle | awk '/Mme_chr13_20100602/,/Mme_chr13_22294270/' | gzip > mme_all_filtsnps_beagleGL_Mme_chr13.VNqtl.beagle.gz
+```
+
+```{r message=F}
+# read beagle file
+VNqtl.chr13_beagle <- read_tsv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr13.VNqtl.beagle.gz")
+```
+
+Polarize genotype probabilities
+```{r}
+# We will polarize by the individual that groups most extremely with early spawning on the PCA, EK2021_389
+# EK2021_389 corresponds to beagle individual 220 and columns 664, 665, and 666 in full dataset
+# reduce outlier beagle to first 30 row to test script
+#outlier_beagle_30 <- head(outlier_beagle, 30)
+```
+
+```{r}
+## Define a function to get allele dosage from genotype likelihood
+get_allele_dosage <- function(x){
+  if(x[2]==x[3] & x[3]==x[4]){
+    return(NA) ## return NA at sites with no coverages (where rescaled GLs are 0.333, 0.333, 0.333)
+  } else {
+    if(x[1]>0.5) { ## polarize the GLs based on frequency at early individual
+      x[2:4] <- x[4:2]
+    }
+    return(x[3] + 2*x[4])
+  }
+}
+
+# try nicolas' and liams script for extracting allelic dosage and polarize in same step
+# separate linkage group and position 
+VNqtl.chr13_beagle <- VNqtl.chr13_beagle %>% separate(marker, c(NA ,"lg", "pos")) %>% 
+  dplyr::select(-allele2)
+
+# set up the data frame, ncols should equal the number of samples and nrows should equal the number of loci
+dosage <- as.data.frame(matrix(ncol = (ncol(VNqtl.chr13_beagle)-3)/3+3, nrow = nrow(VNqtl.chr13_beagle)))
+dosage[,1:3]=VNqtl.chr13_beagle[,1:3]
+
+## Get allele dosage iteratively from each individual
+# 4 columns are extracted for each individual. the 1st of the four columns is the GL for the major allele for the polarizing individual. Choose the reference column according to the individual you want to polarize from. In our case, that is column 199 (EK2021_389)
+for (j in 1:((ncol(VNqtl.chr13_beagle)-3)/3)){
+  temp_ind <- VNqtl.chr13_beagle[,c(142, (1+3*j):(3+3*j))]
+  dosage[,3+j] <- apply(temp_ind, 1, get_allele_dosage)
+}
+
+# rename columns to match sample names
+
+colnames(dosage) <- c("chr","pos","V3",Ind.id$Ind)
+```
+
+#### Convert to long format for plotting
+
+```{r}
+ dosage_long<- pivot_longer(dosage, cols = 4:ncol(dosage), names_to = "Ind", values_to = "allele_dosage") %>% 
+  dplyr::select(-V3) 
+
+dosage_long = left_join(dosage_long, Ind.id, by = "Ind")
+
+write_tsv(dosage_long, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr13.VNqtl.beagle_alleledosage.txt")
+```
+
+## Plot genotype heatmaps
+```{r}
+dosage_long <- read_tsv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr13.VNqtl.beagle_alleledosage.txt")
+
+dosage_long$Pop <- ordered(dosage_long$Pop, levels = c("MAQU","HXNS", "MBNS", "MDME", "DXMA", "MCCT", "PANY", "CTVA", "OINC", "MCNC", "LRSC","JIGA"))
+
+dosage_long_plot <- dosage_long %>% 
+  mutate(allele_dosage_rounded = as.character(round(allele_dosage))) %>% 
+  ggplot(aes(x=as_factor(pos), y=Ind, fill = allele_dosage_rounded)) +
+  geom_tile() +
+  scale_fill_viridis_d(direction = 1) +
+  facet_grid(Pop~chr, scales = "free", space = "free") +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.margin.x = unit(0.2, "lines"),
+        strip.text.y = element_text(angle = 0))
+dosage_long_plot
+```
+
+
+
+```{r}
+## define populations based on genotype and join with sample table
+genotype_assn <- dosage_long %>% 
+  group_by(Ind) %>% 
+  summarise(avg_dosage = mean(allele_dosage, na.rm = T))
+
+genotype_assn.id <- Ind.id %>% left_join(genotype_assn, by = "Ind")
+write_tsv(genotype_assn.id, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr13.VNqtl.beagle_alleledosage_avg_byind.txt")
+```
+
+Correlation between chr13 allele dosage and VN number
+```{r}
+vn.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Silverside_Wild_PhenotypicTraits_sequenced.csv", col_types = "ccdd")
+
+chr13.vnqt.alleledosage.vn.df = inner_join(genotype_assn.id, vn.df, by=c("Ind"))
+
+chr13.vnqt.alleledosage.vn.df$Pop <- ordered(chr13.vnqt.alleledosage.vn.df$Pop, levels = c("MAQU","HXNS", "MBNS", "MDME", "DXMA", "MCCT", "PANY", "CTVA", "OINC", "MCNC", "LRSC","JIGA"))
+
+chr13.vnqt.alleledosage.vn.plot = ggplot(data = chr13.vnqt.alleledosage.vn.df, aes(x=Pop, y=avg_dosage)) +
+  geom_boxplot() +
+  geom_hline(yintercept = mean(chr13.vnqt.alleledosage.vn.df$avg_dosage)) +
+  ylim(c(0,2)) +
+  scale_fill_manual(values = c("firebrick","steelblue")) +
+  theme_cowplot() +
+  ylab("Mean allele dosage") +
+  xlab("Pop")
+
+ggplot(data = chr13.vnqt.alleledosage.vn.df, aes(x=round(avg_dosage,digits = 0), y=Vertebtral_count)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_cowplot() +
+  ylab("Vertebtral Count") +
+  xlab("chr13")
+```
+
+Sum allele dosage
+```{r}
+## define populations based on genotype and join with sample table
+genotype_assn.sum.chr13 <- dosage_long %>% 
+  group_by(Ind) %>% 
+  summarise(avg_dosage = sum(allele_dosage, na.rm = T))
+genotype_assn.sum.chr13.id <- Ind.id %>% left_join(genotype_assn.sum.chr13, by = "Ind")
+
+vn.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/Silverside_Wild_PhenotypicTraits_sequenced.csv", col_types = "ccdd")
+
+chr13.sum.size.alleledosage.df = inner_join(genotype_assn.sum.chr13.id, vn.df, by=c("Ind"))
+
+chr13.sum.size.alleledosage.df$Pop <- ordered(chr13.sum.size.alleledosage.df$Pop, levels = c("MAQU","HXNS", "MBNS", "MDME", "DXMA", "MCCT", "PANY", "CTVA", "OINC", "MCNC", "LRSC","JIGA"))
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+
+ggplot(data = chr13.sum.size.alleledosage.df.filt2, aes(y=round(avg_dosage,digits = 0), x=Vertebtral_count)) +
+  geom_point(shape=21, aes(fill=Pop)) +
+  geom_smooth(method = "lm", color="grey10") +
+  theme_cowplot() +
+  scale_fill_manual(values = mme.pal) +
+  ylab("sum(allele dosage) vnQTL chr.13") +
+  xlab("Vertebtral_count")
+
+chr13.sum.size.alleledosage.df.filt = chr13.sum.size.alleledosage.df %>% drop_na(Vertebtral_count)
+lmm.qtl13 <- lme(Vertebtral_count ~ avg_dosage, random=~1 | Pop, data = chr13.sum.size.alleledosage.df.filt)
+summary(lmm.qtl13)
+anova(lmm.qtl13)
+
+ggplot(data = chr13.sum.size.alleledosage.df, aes(y=round(avg_dosage,digits = 0), x=Vertebtral_count)) +
+  geom_point(shape=21, aes(fill=Pop)) +
+  geom_smooth(method = "lm", aes(color=Pop)) +
+  geom_smooth(method = "lm", color="grey40", linetype="dashed") +
+  theme_cowplot() +
+  ylab("sum(allele dosage) vnQTL chr.13") +
+  xlab("Vertebtral_count")
+```
+
+
+
+#### Chr17
+```{r message=F, warning=F}
+Ind.id <- read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+```
+
+```{bash eval=F, include=T}
+cut -f2 mme_all_filtsnps_beagleGL_Mme_chr17.beagle > mme_all_filtsnps_beagleGL_Mme_chr17.beagle.markers.txt
+
+cat mme_all_filtsnps_beagleGL_Mme_chr17.beagle | awk '/Mme_chr17_10000150/,/Mme_chr17_11000047/' | gzip > mme_all_filtsnps_beagleGL_Mme_chr17.GRqtl.beagle.gz
+```
+
+```{r message=F}
+# read beagle file
+VNqtl.chr17_beagle <- read_tsv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr17.GRqtl.beagle.gz")
+```
+
+Polarize genotype probabilities
+```{r}
+# We will polarize by the individual that groups most extremely with early spawning on the PCA, EK2021_389
+# EK2021_389 corresponds to beagle individual 220 and columns 664, 665, and 666 in full dataset
+# reduce outlier beagle to first 30 row to test script
+#outlier_beagle_30 <- head(outlier_beagle, 30)
+```
+
+```{r}
+## Define a function to get allele dosage from genotype likelihood
+get_allele_dosage <- function(x){
+  if(x[2]==x[3] & x[3]==x[4]){
+    return(NA) ## return NA at sites with no coverages (where rescaled GLs are 0.333, 0.333, 0.333)
+  } else {
+    if(x[1]>0.5) { ## polarize the GLs based on frequency at early individual
+      x[2:4] <- x[4:2]
+    }
+    return(x[3] + 2*x[4])
+  }
+}
+
+# try nicolas' and liams script for extracting allelic dosage and polarize in same step
+# separate linkage group and position 
+VNqtl.chr17_beagle <- VNqtl.chr17_beagle %>% separate(marker, c(NA ,"lg", "pos")) %>% 
+  dplyr::select(-allele2)
+
+# set up the data frame, ncols should equal the number of samples and nrows should equal the number of loci
+dosage.chr17 <- as.data.frame(matrix(ncol = (ncol(VNqtl.chr17_beagle)-3)/3+3, nrow = nrow(VNqtl.chr17_beagle)))
+dosage.chr17[,1:3]=VNqtl.chr17_beagle[,1:3]
+
+## Get allele dosage iteratively from each individual
+# 4 columns are extracted for each individual. the 1st of the four columns is the GL for the major allele for the polarizing individual. Choose the reference column according to the individual you want to polarize from. In our case, that is column 199 (EK2021_389)
+for (j in 1:((ncol(VNqtl.chr17_beagle)-3)/3)){
+  temp_ind <- VNqtl.chr17_beagle[,c(144, (1+3*j):(3+3*j))]
+  dosage.chr17[,3+j] <- apply(temp_ind, 1, get_allele_dosage)
+}
+
+# rename columns to match sample names
+
+colnames(dosage.chr17) <- c("chr","pos","V3",Ind.id$Ind)
+```
+
+#### Convert to long format for plotting
+
+```{r}
+dosage.chr17_long<- pivot_longer(dosage.chr17, cols = 4:ncol(dosage.chr17), names_to = "Ind", values_to = "allele_dosage") %>% 
+  dplyr::select(-V3) 
+
+dosage.chr17_long = left_join(dosage.chr17_long, Ind.id, by = "Ind")
+
+write_tsv(dosage.chr17_long, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr17.VNqtl.beagle_alleledosage.txt")
+```
+
+## Plot genotype heatmaps
+
+```{r}
+dosage.chr17_long <- read_tsv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr17.VNqtl.beagle_alleledosage.txt")
+
+dosage.chr17_long$Pop <- ordered(dosage.chr17_long$Pop, levels = c("MAQU","HXNS", "MBNS", "MDME", "DXMA", "MCCT", "PANY", "CTVA", "OINC", "MCNC", "LRSC","JIGA"))
+
+dosage.chr17_long_plot <- dosage.chr17_long %>% 
+  mutate(allele_dosage_rounded = as.character(round(allele_dosage))) %>% 
+  ggplot(aes(x=as_factor(pos), y=Ind, fill = allele_dosage_rounded)) +
+  geom_tile() +
+  scale_fill_viridis_d(direction = 1) +
+  facet_grid(Pop~chr, scales = "free", space = "free") +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.margin.x = unit(0.2, "lines"),
+        strip.text.y = element_text(angle = 0))
+dosage.chr17_long_plot
+```
+
+
+```{r}
+## define populations based on genotype and join with sample table
+genotype_assn.chr17 <- dosage.chr17_long %>% 
+  group_by(Ind) %>% 
+  summarise(avg_dosage = mean(allele_dosage, na.rm = T))
+
+genotype_assn.chr17.id <- Ind.id %>% left_join(genotype_assn.chr17, by = "Ind")
+write_tsv(genotype_assn.chr17.id, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/beagle_files/mme_all_filtsnps_beagleGL_Mme_chr17.VNqtl.beagle_alleledosage_avg_byind.txt")
+```
+
+Correlation between chr17 allel dosage and VN number
+```{r}
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_data.csv", col_types = "ccdd")
+
+chr17.size.alleledosage.df = inner_join(genotype_assn.chr17.id, size.df, by=c("Ind","Pop"))
+
+chr17.size.alleledosage.df$Pop <- ordered(chr17.size.alleledosage.df$Pop, levels = c("MAQU","HXNS", "MBNS", "MDME", "DXMA", "MCCT", "PANY", "CTVA", "OINC", "MCNC", "LRSC","JIGA"))
+
+chr17.size.alleledosage.plot = ggplot(data = chr17.size.alleledosage.df, aes(x=Pop, y=avg_dosage)) +
+  geom_boxplot() +
+  geom_hline(yintercept = mean(chr17.size.alleledosage.df$avg_dosage)) +
+  ylim(c(0,2)) +
+  scale_fill_manual(values = c("firebrick","steelblue")) +
+  theme_cowplot() +
+  ylab("Mean allele dosage") +
+  xlab("Pop")
+
+ggplot(data = chr17.size.alleledosage.df, aes(x=round(avg_dosage,digits = 0), y=StdLgth)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_cowplot() +
+  ylab("length") +
+  xlab("chr17")
+```
+
+Sum allele dosage
+```{r}
+## define populations based on genotype and join with sample table
+genotype_assn.sum.chr17 <- dosage.chr17_long %>% 
+  group_by(Ind) %>% 
+  summarise(avg_dosage = sum(allele_dosage, na.rm = T))
+genotype_assn.sum.chr17.id <- Ind.id %>% left_join(genotype_assn.sum.chr17, by = "Ind")
+
+size.df = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/selection_analyses/inversion_bodysize_vn_associaton/silverside_bodysize_data.csv", col_types = "ccdd")
+
+chr17.sum.size.alleledosage.df = inner_join(genotype_assn.sum.chr17.id, size.df, by=c("Ind","Pop"))
+
+chr17.sum.size.alleledosage.df$Pop <- ordered(chr17.sum.size.alleledosage.df$Pop, levels = c("MAQU","HXNS", "MBNS", "MDME", "DXMA", "MCCT", "PANY", "CTVA", "OINC", "MCNC", "LRSC","JIGA"))
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+
+ggplot(data = chr17.sum.size.alleledosage.df, aes(y=round(avg_dosage,digits = 0), x=StdLgth)) +
+  geom_point(shape=21, aes(fill=Pop)) +
+  geom_smooth(method = "lm", color="grey10") +
+  theme_cowplot() +
+  scale_fill_manual(values = mme.pal) +
+  ylab("sum(allele dosage) grQTL chr.17") +
+  xlab("standard length (mm)")
+
+chr17.sum.size.alleledosage.df.filt = na.omit(chr17.sum.size.alleledosage.df)
+lmm.qtl17 <- lme(StdLgth ~ avg_dosage, random=~1 | Pop, data = chr17.sum.size.alleledosage.df.filt)
+summary(lmm.qtl17)
+anova(lmm.qtl17)
+
+ggplot(data = chr17.sum.size.alleledosage.df, aes(y=round(avg_dosage,digits = 0), x=StdLgth)) +
+  geom_point(shape=21, aes(fill=Pop)) +
+  geom_smooth(method = "lm", aes(color=Pop)) +
+  geom_smooth(method = "lm", color="grey40", linetype="dashed") +
+  theme_cowplot() +
+  ylab("sum(allele dosage) grQTL chr.17") +
+  xlab("standard length (mm)")
+```
+
+
+```{r}
+dosage.plots = (dosage_long_plot | chr13.vnqt.alleledosage.vn.plot) / (dosage.chr17_long_plot | chr17.size.alleledosage.plot)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

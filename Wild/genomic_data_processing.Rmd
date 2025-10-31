@@ -1,0 +1,81 @@
+---
+title: "silverside genomics - raw data processing"
+author: "Arne Jacobs"
+output: 
+  md_document:
+    variant: markdown_github
+    toc: true
+highlight: pygments
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+names(knitr::knit_engines$get())
+```
+
+# Plotting locations and phenotypic trait variation for M. menidia sample sites:
+
+Load R-packages:
+```{r, eval=F, include=F}
+#Plotting:
+library(tidyverse)
+library(ggfortify)
+library(RColorBrewer)
+library(wesanderson)
+library(cowplot)
+library(ggridges)
+library(reshape2)
+```
+
+
+
+# Processing of Menidia sequence data
+
+All analyses were performed on the lab server at Cornell, which contains all the necessary software, scripts and data: The data and scripts are publically available and can be found either as part of the github repository or on NCBI. 
+
+
+## Create genome sequence dictionary for picard/gatk:
+```{bash, eval=F}
+java -Xmx60g -jar /programs/picard-tools-2.9.0/picard.jar CreateSequenceDictionary R=/workdir/arne/ReferenceSeq/Mmenidia_refgenome_anchored.all_renamed_v2.fasta O=/workdir/arne/ReferenceSeq/Mmenidia_refgenome_anchored.all_renamed_v2.dict
+
+samtools faidx /workdir/arne/ReferenceSeq/Mmenidia_refgenome_anchored.all_renamed_v2.fasta
+```
+
+**********************
+
+## Mapping and cleaning of reads:
+
+Pipeline performs adapter clipping using TRIMMOMATIC, maps the reads to the genome using BOWTIE2, removes low-quality reads and duplicates. 
+
+```{bash, eval = FALSE}
+nohup sh ./LowCov_Mapping_PE.sh /workdir/arne/ReferenceSeq/Mmenidia_refgenome_anchored.all_renamed_v2.fasta mme_assemblyv2 /workdir/arne/sampleinfo/mme_MCCT_samplelist.txt /workdir/backup/silverside/Geographic_2017/ /workdir/arne/ReferenceSeq/NexteraPE_NT.fa /workdir/arne/sampleinfo/mme_MCCT_sampletable.txt very-sensitive > /workdir/arne/output_logfiles/LowCov_Mapping_mme_MCCT_samples.nohup &
+```
+
+## Indel-realignment
+
+Perform indel realignment based on database build for representative individuals from all individuals:
+
+Build indel database:
+```{bash, eval = FALSE}
+nohup sh CreateIndelTarget.sh /workdir/arne/sampleinfo/BamFile_list_dedupped.list > /workdir/arne/output_logfiles/CreateIndelTarget_log.nohup &
+```
+
+Index bam files (required for gatk)
+```{bash, eval = F}
+nohup sh samtools_index_bam.sh /workdir/arne/sampleinfo/MCCT_bamfiles_dedupped.txt > /workdir/arne/mme_transcriptomics/log_files/samtools_index_bam_MCCT.nohup.log &
+```
+
+Perform indel realignment:
+```{bash, eval = FALSE}
+nohup sh IndelRealigner.sh /workdir/arne/sampleinfo/bamlist_mcct_dedupped.list > /workdir/arne/output_logfiles/IndelRealigner_MCCT_log.nohup &
+```
+
+## Estimating depth of coverage and standard deviation for each sample:
+```{bash, eval = FALSE}
+nohup sh ./GetReadDepthPerPosition_allPositions.sh /workdir/arne/sampleinfo/bamlist_mcct_coverage.txt /workdir/arne/ReferenceSeq/Mmenidia_refgenome_anchored.all_renamed_v2.fasta /workdir/arne/results/snp_datasets/mme_depthcoverage_mcct.txt /workdir/arne/BamFiles_clean/ > /workdir/arne/output_logfiles/mcct_samtoolsdepth.nohup &
+```
+
+
+

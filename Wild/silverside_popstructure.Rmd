@@ -1,0 +1,844 @@
+---
+title: "Silverside Genomics - Population structure analysis"
+author: "Arne Jacobs"
+output: github_document
+highlight: pygments
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+names(knitr::knit_engines$get())
+```
+
+Load R-packages:
+```{r, eval=F, include=F}
+#Plotting:
+library(tidyverse)
+library(ggfortify)
+library(RColorBrewer)
+library(wesanderson)
+library(cowplot)
+library(ggridges)
+library(reshape2)
+library(ggtree)
+library(patchwork)
+
+#Analysis
+library(windowscanr)
+library(corrr)
+library(vegan)
+library(conStruct)
+library(ade4)
+library(gradientForest)
+library(matrixcalc)
+```
+
+
+
+# Population structure analyses.
+
+Analyses of population structure across the range using different approaches:
+
++ Principal components analyses (pcangsd)
++ Admixture analyses (pcangsd)
++ ConStruct admixture analyses
++ Treemix analyses
++ Isolation-by-distance (Mantel test)
+
+
+## Principal components analyses and admxiture with PCangsd:
+
+PCA and admixture based on all SNPs and individuals:
+```{bash, eval = FALSE}
+# Calculate covariance matrix and perform admixture analysis in PCangsd:
+nohup bash ./PCAngsd_PCA_admix.sh /workdir/arne/results/snp_datasets/mme_all_filtsnps_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_all_filtsnps > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_allfiltsnps.nohup &
+```
+
+Estimate eigenvectors and plot PCA:
+```{r, eval = FALSE}
+Mme.cov <- as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_all_filtsnps.cov", header = F))
+Ind.id <- read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+
+#Calculate PCA for covariance matrix
+mme.pca <- eigen(Mme.cov)
+x <- sum(mme.pca$values)
+varPC1 <- (mme.pca$values[1]/x)*100
+varPC2 <- (mme.pca$values[2]/x)*100
+varPC3 <- (mme.pca$values[3]/x)*100
+varPC4 <- (mme.pca$values[4]/x)*100
+varPC5 <- (mme.pca$values[5]/x)*100
+varPC6 <- (mme.pca$values[6]/x)*100
+varPC7 <- (mme.pca$values[7]/x)*100
+varPC8 <- (mme.pca$values[8]/x)*100
+varPC9 <- (mme.pca$values[9]/x)*100
+varPC10 <- (mme.pca$values[10]/x)*100
+
+varPC = rbind(varPC1, varPC2, varPC3, varPC4, varPC5, varPC6, varPC7, varPC8, varPC9, varPC10)
+plot(varPC)
+
+eigenvectors <- (mme.pca$vectors)
+pca.vectors <- cbind(Ind.id, eigenvectors)
+str(pca.vectors)
+names(pca.vectors)[3] <- "PC1"
+names(pca.vectors)[4] <- "PC2"
+names(pca.vectors)[5] <- "PC3"
+names(pca.vectors)[6] <- "PC4"
+names(pca.vectors)[7] <- "PC5"
+names(pca.vectors)[8] <- "PC6"
+names(pca.vectors)[9] <- "PC7"
+names(pca.vectors)[10] <- "PC8"
+names(pca.vectors)[11] <- "PC9"
+names(pca.vectors)[12] <- "PC10"
+```
+
+```{r, eval = FALSE}
+#Plot pca for all individuals (outgroup + Mme pops)
+pca.vectors$Pop <- ordered(pca.vectors$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+#mme.pal.old <- c("firebrick","#CC4B00","#dd4124","darkorange2", "#ed8b00","#FFC100", "#edd746","#0f85a0","#407890","#275268", "#4878A6", "#003667") 
+#mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#114b5f","#3a6ea5", "#2c4268") 
+
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+
+mme.pc1.allsnps <- ggplot(data = pca.vectors, aes(x=PC1, y=PC2, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 1 (18.46%)") +
+  ylab("Principal component 2 (8.82%)") +
+  theme_cowplot() + theme(legend.position = "NA")
+mme.pc1.allsnps
+
+mme.pc2.allsnps <- ggplot(data = pca.vectors, aes(x=PC3, y=PC4, fill = Pop,colour = Pop)) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  geom_point(size = 5, shape = 21) +
+  xlab("Principal component 3 (4.36%)") +
+  ylab("Principal component 4 (2.40%)") +
+  theme_cowplot() + theme(legend.position = "NA")
+mme.pc2.allsnps
+
+mme.allsnps.pca = mme.pc1.allsnps + mme.pc2.allsnps
+```
+
+
+```{r, eval = FALSE}
+#Calculate the mean and plot population centroids + s.e.
+PCA.mme.mean <- plyr::ddply(pca.vectors, c("Pop"), summarise,
+                        PC1.mean = mean(PC1),
+                        PC1.sd = sd(PC1),
+                        PC2.mean = mean(PC2),
+                        PC2.sd = sd(PC2),
+                        PC3.mean = mean(PC3),
+                        PC3.sd = sd(PC3),
+                        PC4.mean = mean(PC4),
+                        PC4.sd = sd(PC4),
+                        PC5.mean = mean(PC5),
+                        PC5.sd = sd(PC5),
+                        PC6.mean = mean(PC6),
+                        PC6.sd = sd(PC6))
+
+PCA.mme.mean$Pop <- ordered(PCA.mme.mean$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+mme.pc1.mean <- ggplot(data = PCA.mme.mean, aes(x=PC1.mean, y=PC2.mean, fill = Pop),colour = "black") +
+  geom_errorbarh(aes(xmax = PC1.mean + PC1.sd, xmin = PC1.mean - PC1.sd, height = 0), colour = "gray50") +
+  geom_errorbar(aes(ymax = PC2.mean + PC2.sd, ymin = PC2.mean - PC2.sd, width=0), colour = "gray50") +
+  geom_point(size = 6, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 1 (18.46%)") +
+  ylab("Principal component 2 (8.82%)") +
+  theme_cowplot()
+mme.pc1.mean
+#save_plot("Mme_allSNPs_PCA_pc1vs2_centroid_sd.pdf", mme.pc1.mean, base_aspect_ratio = 1.3)
+
+mme.pc2.mean <- ggplot(data = PCA.mme.mean, aes(x=PC3.mean, y=PC4.mean, fill = Pop),colour = "black") +
+  geom_errorbarh(aes(xmax = PC3.mean + PC3.sd, xmin = PC3.mean - PC3.sd, height = 0), colour = "gray50") +
+  geom_errorbar(aes(ymax = PC4.mean + PC4.sd, ymin = PC4.mean - PC4.sd, width=0), colour = "gray50") +
+  geom_point(size = 6, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 3 (4.36%)") +
+  ylab("Principal component 4 (2.40%)")  +
+  theme_cowplot()
+mme.pc2.mean
+#save_plot("Mme_allSNPs_PCA_pc3vs4_centroid_sd.pdf", mme.pc2.mean, base_aspect_ratio = 1.3)
+
+mme.PC3.mean <- ggplot(data = PCA.mme.mean, aes(x=PC5.mean, y=PC6.mean, fill = Pop),colour = "black") +
+  geom_errorbarh(aes(xmax = PC5.mean + PC5.sd, xmin = PC5.mean - PC5.sd, height = 0), colour = "gray50") +
+  geom_errorbar(aes(ymax = PC6.mean + PC6.sd, ymin = PC6.mean - PC6.sd, width=0), colour = "gray50") +
+  geom_point(size = 6, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 5 (1.75%)") +
+  ylab("Principal component 6 (1.64%)") +
+  theme_cowplot()
+mme.PC3.mean
+```
+
+
+
+*******************
+
+
+PCA and admixture based on all thinned SNP dataset:
+```{bash, eval = FALSE}
+# Calculate covariance matrix and perform admixture analysis in PCangsd:
+nohup bash ./PCAngsd_PCA_admix.sh /workdir/arne/results/snp_datasets/mme_all_thinnednps_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_thinnedsnps > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_thinnedsnps.nohup &
+```
+
+Estimate eigenvectors and plot PCA:
+```{r, eval = FALSE}
+Mme.cov.thinned <- as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_thinnedsnps.cov", header = F))
+Ind.id <- read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+
+#Calculate PCA for covariance matrix
+mme.pca <- eigen(Mme.cov.thinned)
+x <- sum(mme.pca$values)
+varPC1 <- (mme.pca$values[1]/x)*100
+varPC2 <- (mme.pca$values[2]/x)*100
+varPC3 <- (mme.pca$values[3]/x)*100
+varPC4 <- (mme.pca$values[4]/x)*100
+varPC5 <- (mme.pca$values[5]/x)*100
+varPC6 <- (mme.pca$values[6]/x)*100
+varPC7 <- (mme.pca$values[7]/x)*100
+varPC8 <- (mme.pca$values[8]/x)*100
+varPC9 <- (mme.pca$values[9]/x)*100
+varPC10 <- (mme.pca$values[10]/x)*100
+
+varPC = rbind(varPC1, varPC2, varPC3, varPC4, varPC5, varPC6, varPC7, varPC8, varPC9, varPC10)
+plot(varPC)
+
+eigenvectors <- (mme.pca$vectors)
+pca.vectors <- cbind(Ind.id, eigenvectors)
+str(pca.vectors)
+names(pca.vectors)[3] <- "PC1"
+names(pca.vectors)[4] <- "PC2"
+names(pca.vectors)[5] <- "PC3"
+names(pca.vectors)[6] <- "PC4"
+names(pca.vectors)[7] <- "PC5"
+names(pca.vectors)[8] <- "PC6"
+names(pca.vectors)[9] <- "PC7"
+names(pca.vectors)[10] <- "PC8"
+names(pca.vectors)[11] <- "PC9"
+names(pca.vectors)[12] <- "PC10"
+```
+
+```{r, eval = FALSE}
+#Plot pca for all individuals (outgroup + Mme pops)
+pca.vectors$Pop <- ordered(pca.vectors$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+#mme.pal.old <- c("firebrick","#CC4B00","#dd4124","darkorange2", "#ed8b00","#FFC100", "#edd746","#0f85a0","#407890","#275268", "#4878A6", "#003667") 
+#mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#114b5f","#3a6ea5", "#2c4268") 
+
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+
+mme.pc1vs2.thinned <- ggplot(data = pca.vectors, aes(x=PC1, y=PC2, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 1 (17.06%)") +
+  ylab("Principal component 2 (7.98%)") +
+  theme_cowplot() + theme(legend.position = "NA")
+mme.pc1vs2.thinned
+#save_plot("Mme_allSNPs_PCA_pc1vs2.pdf", mme.pc1, base_aspect_ratio = 1.3)
+
+mme.pc3vs4.thinned <- ggplot(data = pca.vectors, aes(x=PC3, y=PC4, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 3 (4.16%)") +
+  ylab("Principal component 4 (2.38%)") +
+  theme_cowplot() + theme(legend.position = "NA")
+
+mme.pc5vs6.thinned <- ggplot(data = pca.vectors, aes(x=PC5, y=PC6, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 5 (1.82%)") +
+  ylab("Principal component 6 (1.67%)") +
+  theme_cowplot() + theme(legend.position = "NA")
+
+mme.allsnps.thinnedsnps.pca = (mme.pc1.allsnps / mme.pc2.allsnps) | (mme.pc1vs2.thinned / mme.pc3vs4.thinned)
+
+
+```
+
+```{r, eval = FALSE}
+#Calculate the mean and plot population centroids + s.e.
+PCA.mme.mean <- plyr::ddply(pca.vectors, c("Pop"), summarise,
+                        PC1.mean = mean(PC1),
+                        PC1.sd = sd(PC1),
+                        PC2.mean = mean(PC2),
+                        PC2.sd = sd(PC2),
+                        PC3.mean = mean(PC3),
+                        PC3.sd = sd(PC3),
+                        PC4.mean = mean(PC4),
+                        PC4.sd = sd(PC4),
+                        PC5.mean = mean(PC5),
+                        PC5.sd = sd(PC5),
+                        PC6.mean = mean(PC6),
+                        PC6.sd = sd(PC6))
+
+PCA.mme.mean$Pop <- ordered(PCA.mme.mean$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+mme.pc1.mean <- ggplot(data = PCA.mme.mean, aes(x=PC1.mean, y=PC2.mean, fill = Pop),colour = "black") +
+  geom_errorbarh(aes(xmax = PC1.mean + PC1.sd, xmin = PC1.mean - PC1.sd, height = 0), colour = "gray50") +
+  geom_errorbar(aes(ymax = PC2.mean + PC2.sd, ymin = PC2.mean - PC2.sd, width=0), colour = "gray50") +
+  geom_point(size = 6, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 1 (17.06%)") +
+  ylab("Principal component 2 (7.98%)") +
+  theme_cowplot()
+mme.pc1.mean
+#save_plot("Mme_allSNPs_PCA_pc1vs2_centroid_sd.pdf", mme.pc1.mean, base_aspect_ratio = 1.3)
+
+mme.pc2.mean <- ggplot(data = PCA.mme.mean, aes(x=PC3.mean, y=PC4.mean, fill = Pop),colour = "black") +
+  geom_errorbarh(aes(xmax = PC3.mean + PC3.sd, xmin = PC3.mean - PC3.sd, height = 0), colour = "gray50") +
+  geom_errorbar(aes(ymax = PC4.mean + PC4.sd, ymin = PC4.mean - PC4.sd, width=0), colour = "gray50") +
+  geom_point(size = 6, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 3 (4.36%)") +
+  ylab("Principal component 4 (2.40%)")  +
+  theme_cowplot()
+mme.pc2.mean
+#save_plot("Mme_allSNPs_PCA_pc3vs4_centroid_sd.pdf", mme.pc2.mean, base_aspect_ratio = 1.3)
+```
+
+
+
+
+*************************
+
+PCA and admixture based on all thinned SNPs without inversions:
+```{bash, eval = FALSE}
+# Calculate covariance matrix and perform admixture analysis in PCangsd:
+nohup bash ./PCAngsd_PCA_admix.sh /workdir/arne/results/snp_datasets/mme_all_thinnednps_noinv_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_thinnedsnps_noinv > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_thinnedsnps_noinv.nohup &
+```
+
+Estimate eigenvectors and plot PCA:
+```{r, eval = FALSE}
+Mme.cov.thinned.noinv <- as.matrix(read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_thinnedsnps_noinv.cov", header = F))
+Ind.id <- read.table("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+
+#Calculate PCA for covariance matrix
+mme.pca <- eigen(Mme.cov.thinned.noinv)
+x <- sum(mme.pca$values)
+varPC1 <- (mme.pca$values[1]/x)*100
+varPC2 <- (mme.pca$values[2]/x)*100
+varPC3 <- (mme.pca$values[3]/x)*100
+varPC4 <- (mme.pca$values[4]/x)*100
+varPC5 <- (mme.pca$values[5]/x)*100
+varPC6 <- (mme.pca$values[6]/x)*100
+varPC7 <- (mme.pca$values[7]/x)*100
+varPC8 <- (mme.pca$values[8]/x)*100
+varPC9 <- (mme.pca$values[9]/x)*100
+varPC10 <- (mme.pca$values[10]/x)*100
+varPCs = as.data.frame(c(varPC1, varPC2,varPC3,varPC4,varPC5,varPC6,varPC7,varPC8,varPC9,varPC10))
+plot(varPCs$`c(varPC1, varPC2, varPC3, varPC4, varPC5, varPC6, varPC7, varPC8, varPC9, varPC10)`)
+
+
+eigenvectors <- (mme.pca$vectors)
+pca.vectors <- cbind(Ind.id, eigenvectors)
+str(pca.vectors)
+names(pca.vectors)[3] <- "PC1"
+names(pca.vectors)[4] <- "PC2"
+names(pca.vectors)[5] <- "PC3"
+names(pca.vectors)[6] <- "PC4"
+names(pca.vectors)[7] <- "PC5"
+names(pca.vectors)[8] <- "PC6"
+names(pca.vectors)[9] <- "PC7"
+names(pca.vectors)[10] <- "PC8"
+names(pca.vectors)[11] <- "PC9"
+names(pca.vectors)[12] <- "PC10"
+
+write_csv(pca.vectors, "/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_pca_thinned_noinv_ev.csv", append = F, col_names = T, quote_escape = F)
+```
+
+```{r, eval = FALSE}
+#Plot pca for all individuals (outgroup + Mme pops)
+pca.vectors$Pop <- ordered(pca.vectors$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+#mme.pal.old <- c("firebrick","#CC4B00","#dd4124","darkorange2", "#ed8b00","#FFC100", "#edd746","#0f85a0","#407890","#275268", "#4878A6", "#003667") 
+#mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#114b5f","#3a6ea5", "#2c4268") 
+
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+
+mme.pc1_2.noinv <- ggplot(data = pca.vectors, aes(x=PC1, y=PC2, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 1 (14.66%)") +
+  ylab("Principal component 2 (5.78%)") +
+  theme_cowplot() + theme(legend.position = "NA")
+mme.pc1_2.noinv
+
+mme.pc3_4.noinv <- ggplot(data = pca.vectors, aes(x=PC3, y=PC4, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 3 (2.78%)") +
+  ylab("Principal component 4 (1.93%)") +
+  theme_cowplot()+ theme(legend.position = "NA")
+mme.pc3_4.noinv
+
+mme.pc4_5 <- ggplot(data = pca.vectors, aes(x=PC4, y=PC5, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 4 (1.93%)") +
+  ylab("Principal component 5 (1.78%)") +
+  theme_cowplot()
+mme.pc4_5+ theme(legend.position = "NA")
+
+mme.allsnps.thinnedsnps.thinnednoinv.pca = (mme.pc1.allsnps / mme.pc2.allsnps) | (mme.pc1vs2.thinned / mme.pc3vs4.thinned) | (mme.pc1_2.noinv / mme.pc3_4.noinv) 
+mme.allsnps.thinnedsnps.thinnednoinv.pca + plot_annotation(tag_levels = 'A')
+```
+
+Plot the population centroids
+```{r, eval = FALSE}
+#Calculate the mean and plot population centroids + s.e.
+PCA.mme.mean <- plyr::ddply(pca.vectors, c("Pop"), summarise,
+                        PC1.mean = mean(PC1),
+                        PC1.sd = sd(PC1),
+                        PC2.mean = mean(PC2),
+                        PC2.sd = sd(PC2),
+                        PC3.mean = mean(PC3),
+                        PC3.sd = sd(PC3),
+                        PC4.mean = mean(PC4),
+                        PC4.sd = sd(PC4),
+                        PC5.mean = mean(PC5),
+                        PC5.sd = sd(PC5),
+                        PC6.mean = mean(PC6),
+                        PC6.sd = sd(PC6))
+
+PCA.mme.mean$Pop <- ordered(PCA.mme.mean$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+mme.pc1.mean <- ggplot(data = PCA.mme.mean, aes(x=PC1.mean, y=PC2.mean, fill = Pop),colour = "black") +
+  geom_errorbarh(aes(xmax = PC1.mean + PC1.sd, xmin = PC1.mean - PC1.sd, height = 0), colour = "gray50") +
+  geom_errorbar(aes(ymax = PC2.mean + PC2.sd, ymin = PC2.mean - PC2.sd, width=0), colour = "gray50") +
+  geom_point(size = 6, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 1 (14.66%)") +
+  ylab("Principal component 2 (5.78%)") +
+  theme_cowplot()
+mme.pc1.mean
+#save_plot("Mme_allSNPs_PCA_pc1vs2_centroid_sd.pdf", mme.pc1.mean, base_aspect_ratio = 1.3)
+
+mme.pc2.mean <- ggplot(data = PCA.mme.mean, aes(x=PC3.mean, y=PC4.mean, fill = Pop),colour = "black") +
+  geom_errorbarh(aes(xmax = PC3.mean + PC3.sd, xmin = PC3.mean - PC3.sd, height = 0), colour = "gray50") +
+  geom_errorbar(aes(ymax = PC4.mean + PC4.sd, ymin = PC4.mean - PC4.sd, width=0), colour = "gray50") +
+  geom_point(size = 6, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("Principal component 3 (4.36%)") +
+  ylab("Principal component 4 (2.40%)")  +
+  theme_cowplot()
+mme.pc2.mean
+#save_plot("Mme_allSNPs_PCA_pc3vs4_centroid_sd.pdf", mme.pc2.mean, base_aspect_ratio = 1.3)
+```
+
+
+Create combined PC (PC1-5) score for each individual and plot versus latitude
+```{r, eval = FALSE}
+pca.vectors$combPC = (pca.vectors$PC1 * varPC1) + (pca.vectors$PC2 * varPC2) + (pca.vectors$PC3 * varPC3) + (pca.vectors$PC4 * varPC4)+ (pca.vectors$PC5 * varPC5)
+pca.vectors = as_tibble(pca.vectors)
+pca.vectors = type_convert(pca.vectors)
+
+pop <- read.csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+names(pop)[1] = "Pop"
+pca.vectors2 = as_tibble(merge(pca.vectors, pop, by="Pop"))
+#Add distance from JIGA to dataframe
+dist <- read.csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+pca.vectors2 = as_tibble(merge(pca.vectors2, dist, by="Pop"))
+pca.vectors2 = type_convert(pca.vectors2)
+pca.vectors2 = pca.vectors2[,c("Pop","PC1","PC2","PC3","PC4","PC5","Dist")]
+#Remove MAQU_893 as clusters with other individuals
+
+ggplot(data = pca.vectors2, aes(x=Dist, y=-PC1, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  geom_smooth(method = "loess", colour = "grey") +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme_cowplot()
+
+ggplot(data = pca.vectors2, aes(x=Dist, y=PC2, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme_cowplot()
+
+ggplot(data = pca.vectors, aes(x=Pop, y=PC3, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme_cowplot()
+
+ggplot(data = pca.vectors, aes(x=Pop, y=PC4, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme_cowplot()
+
+ggplot(data = pca.vectors, aes(x=Pop, y=PC5, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme_cowplot()
+
+ggplot(data = pca.vectors, aes(x=Pop, y=combPC, fill = Pop, colour = Pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  theme_cowplot()
+```
+
+Plot admixture proportions based on thinned SNPs with and without inversions
+```{r, eval = FALSE}
+Mme.thinned.noinv.admix <- as.matrix(read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_thinnedsnps_noinv.K6.a0.qopt", header = F))
+Ind.id <- read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+Mme.thinned.noinv.admix.ind = cbind(Ind.id, Mme.thinned.noinv.admix)
+Mme.thinned.noinv.admix.ind$Pop <- ordered(Mme.thinned.noinv.admix.ind$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+ordered = Mme.thinned.noinv.admix.ind[order(Mme.thinned.noinv.admix.ind$Pop),]
+barplot(t(as.matrix(subset(ordered, select=V1:V6))), col=c("blue", "green", "red", "pink", "orange","black"), border=NA)
+
+Mme.thinned.admix <- as.matrix(read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_thinnedsnps.K7.a0.qopt", header = F))
+Ind.id <- read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", header = T)
+Mme.thinned.admix.ind = cbind(Ind.id, Mme.thinned.admix)
+Mme.thinned.admix.ind$Pop <- ordered(Mme.thinned.admix.ind$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+ordered = Mme.thinned.admix.ind[order(Mme.thinned.admix.ind$Pop),]
+barplot(t(as.matrix(subset(ordered, select=V1:V6))), col=c("blue", "green", "red", "pink", "orange","black","forestgreen"), border=NA)
+```
+
+**************************************
+Run PCangsd to estimate admixture proportions for K=2 without MAQU and HXNS, as they have different genetic ancestries (with and without inversion)
+```{bash, eval = FALSE}
+nohup bash ./PCAngsd_PCA_admix_K.sh /workdir/arne/results/snp_datasets/mme_woNorthern_thinnednps_noinv_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_woNorthern_thinnedsnps_noinv_k2 2 > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_woNorthern_thinnedsnps_noinv_k2.nohup &
+
+nohup bash ./PCAngsd_PCA_admix_K.sh /workdir/arne/results/snp_datasets/mme_woNorthern_thinnednps_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_woNorthern_thinnedsnps_noinv_k2 2 > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_woNorthern_thinnedsnps_k2.nohup &
+```
+
+
+
+Plot admixture proportions for K=2 w/o inversion
+```{r, eval = FALSE}
+admK2 = RcppCNPy::npyLoad("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/pca_admix_mme_woNorthern_thinnedsnps_noinv_k2.admix.Q.npy")
+Ind.id <- read_delim("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_all_popstr_table.txt", col_names = T, delim = "\t")
+Ind.id.noNorth = filter(Ind.id, Pop != "HXNS", Pop != "MAQU")
+Mme.thinned.noinv.nNorth.admix.ind = cbind(Ind.id.noNorth, admK2)
+Mme.thinned.noinv.nNorth.admix.ind$Pop <- ordered(Mme.thinned.noinv.nNorth.admix.ind$Pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS"))
+ordered = Mme.thinned.noinv.nNorth.admix.ind[order(Mme.thinned.noinv.nNorth.admix.ind$Pop),]
+barplot(t(as.matrix(subset(ordered, select=3:4))), col=c("#05668D", "firebrick"), border=NA)
+
+
+ordered2 = Mme.thinned.noinv.nNorth.admix.ind[order(Mme.thinned.noinv.nNorth.admix.ind$`1`),]
+barplot(t(as.matrix(subset(ordered2, select=3:4))), col=c("#05668D", "firebrick"), border=NA)
+```
+
+
+
+**************************************
+Run PCangsd to estimate admixture proportions for K=2
+```{bash, eval = FALSE}
+nohup bash ./PCAngsd_PCA_admix_K.sh /workdir/arne/results/snp_datasets/mme_all_thinnednps_noinv_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_thinnedsnps_noinv_k2 2 > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_thinnedsnps_noinv_k2.nohup &
+```
+
+
+**************************************
+PCA based on neutral SNPs (with and without inversions)
+
+Based on PCangsd:
+PCA based on all neutral SNPs including inversion regions:
+```{bash, eval = FALSE}
+nohup bash ./PCAngsd_PCA_admix.sh /workdir/arne/results/snp_datasets/mme_all_neutralnps_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_neutralsnps > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_neutralsnps.nohup &
+```
+
+PCA based on all neutral SNPs without inversion regions:
+```{bash, eval = FALSE}
+nohup bash ./PCAngsd_PCA_admix.sh /workdir/arne/results/snp_datasets/mme_all_neutralnps_noinv_beagleGL.beagle.gz /workdir/arne/results/mme_popstructure/ pca_admix_mme_neutralsnps_noinv > /workdir/arne/output_logfiles/PCAngsd_pca_admix_mme_neutralsnps_noinv.nohup &
+```
+
+
+
+Based on covariance matrix (angsd) for neutral SNPs:
+```{r, eval = FALSE}
+cov.neutSNPs.m=as.matrix(read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_neutral_snps_ibs.covMat"))
+ind.8x.df=as.matrix(read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/lcwgs_guide_empirical/analysis/bamlist_8x.txt"))
+cov.neutSNPs.m.pca=eigen(cov.neutSNPs.m)
+cov.neutSNPs.m.pca=as_tibble(cov.neutSNPs.m.pca$vectors)
+names(cov.neutSNPs.m.pca)[1]=c("PC1")
+names(cov.neutSNPs.m.pca)[2]=c("PC2")
+cov.neutSNPs.m.pca.df=cbind(ind.df,cov.neutSNPs.m.pca)
+cov.neutSNPs.m.pca.df=cbind(ind.df,cov.neutSNPs.m.pca)
+
+ggplot(data=cov.neutSNPs.m.pca, aes(x=PC1,y=PC2)) +
+  geom_point(size = 4, shape=21) +
+  geom_hline(yintercept = 0, colour = "gray70", linetype = "dashed") +
+  geom_vline(xintercept = 0, colour = "gray70", linetype = "dashed") +
+  scale_fill_brewer(palette = "RdBu") +
+  theme_cowplot()+
+  theme(legend.position = "NA")
+```
+
+Based on covariance matrix (angsd) for neutral SNPs without inversions:
+```{r, eval = FALSE}
+cov.neutSNPs.m=as.matrix(read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/mme_neutral_snps_noinv_ibs.covMat"))
+ind.8x.df=as.matrix(read.table("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/lcwgs_guide_empirical/analysis/bamlist_8x.txt"))
+cov.neutSNPs.m.pca=eigen(cov.neutSNPs.m)
+cov.neutSNPs.m.pca=as_tibble(cov.neutSNPs.m.pca$vectors)
+names(cov.neutSNPs.m.pca)[1]=c("PC1")
+names(cov.neutSNPs.m.pca)[2]=c("PC2")
+cov.neutSNPs.m.pca.df=cbind(ind.df,cov.neutSNPs.m.pca)
+
+ggplot(data=cov.neutSNPs.m.pca, aes(x=PC1,y=PC2)) +
+  geom_point(size = 4, shape=21) +
+  geom_hline(yintercept = 0, colour = "gray70", linetype = "dashed") +
+  geom_vline(xintercept = 0, colour = "gray70", linetype = "dashed") +
+  scale_fill_brewer(palette = "RdBu") +
+  theme_cowplot()+
+  theme(legend.position = "NA")
+```
+
+
+**************************************
+
+## Isolation-by-distance
+
+All SNPs
+```{r, eval = F}
+dist.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_12pops.csv")
+dist.mat <- as.matrix(dist.mat[,2:13]) %>% as.dist()
+dist.mat <- as.matrix(dist.mat) %>% as.dist()
+
+fst.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/IBD/mme_pairwisefst_allSNPs_matrix.csv")
+fst.mat <- as.matrix(fst.mat[,2:13])
+genetic_dist <- as.matrix(fst.mat/(1-fst.mat)) %>% as.dist()
+
+#Mantel test to test for IBD:
+mantel(dist.mat, genetic_dist, method="pearson", permutations=999)
+
+mantel <- mantel.rtest(genetic_dist, dist.mat, nrepet = 9999)
+linear <- lm(genetic_dist~dist.mat)
+
+IBDplot <- ggplot(data=linear$model, mapping=aes(dist.mat, genetic_dist)) +
+  geom_smooth(method="lm", se = T, colour = "slategray") +
+  geom_point(shape = 21, colour = "black", fill = "white", stroke = 1.5, size = 3) +
+  annotate(geom = "text", x = 700, y = 0.24, label = paste0("r=", round(mantel$obs, digits = 3), ";  p=", mantel$pvalue), size = 5) +
+  xlab("Geographic distance [km]") +
+  ylab("Genetic distance [Fst/(1-Fst]") +
+  theme_cowplot()
+IBDplot
+ggsave2(IBDplot, filename = "/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/Mme_IBD_plot.pdf")
+```
+
+
+Neutral SNPs
+```{r, eval = F}
+dist.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_12pops.csv")
+dist.mat <- as.matrix(dist.mat[,2:13]) %>% as.dist()
+dist.mat <- as.matrix(dist.mat) %>% as.dist()
+
+neutfst.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/IBD/mme_pairwisefst_neutSNPs_matrix.csv")
+neutfst.mat <- as.matrix(neutfst.mat[,2:13])
+genetic_dist <- as.matrix(neutfst.mat/(1-neutfst.mat)) %>% as.dist()
+
+#Mantel test to test for IBD:
+mantel(dist.mat, genetic_dist, method="pearson", permutations=999)
+
+mantel <- mantel.rtest(genetic_dist, dist.mat, nrepet = 9999)
+linear <- lm(genetic_dist~dist.mat)
+
+IBDplot <- ggplot(data=linear$model, mapping=aes(dist.mat, genetic_dist)) +
+  geom_smooth(method="lm", se = T, colour = "slategray") +
+  geom_point(shape = 21, colour = "black", fill = "white", stroke = 1.5, size = 3) +
+  annotate(geom = "text", x = 700, y = 0.24, label = paste0("r=", round(mantel$obs, digits = 3), ";  p=", mantel$pvalue), size = 5) +
+  xlab("Geographic distance [km]") +
+  ylab("Genetic distance [Fst/(1-Fst]") +
+  theme_cowplot()
+IBDplot
+ggsave2(IBDplot, filename = "/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/Mme_IBD_plot.pdf")
+```
+
+Neutral SNPs w/o inversions
+```{r, eval = F}
+dist.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_12pops.csv")
+dist.mat <- as.matrix(dist.mat[,2:13]) %>% as.dist()
+dist.mat <- as.matrix(dist.mat) %>% as.dist()
+
+neutfst.noinv.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/IBD/mme_pairwisefst_neutSNPs_noinv_matrix.csv")
+neutfst.noinv.mat <- as.matrix(neutfst.noinv.mat[,2:13])
+genetic_dist <- as.matrix(neutfst.noinv.mat/(1-neutfst.noinv.mat)) %>% as.dist()
+
+#Mantel test to test for IBD:
+mantel(dist.mat, genetic_dist, method="pearson", permutations=999)
+
+mantel <- mantel.rtest(genetic_dist, dist.mat, nrepet = 9999)
+linear <- lm(genetic_dist~dist.mat)
+
+IBDplot <- ggplot(data=linear$model, mapping=aes(dist.mat, genetic_dist)) +
+  geom_smooth(method="lm", se = T, colour = "slategray") +
+  geom_point(shape = 21, colour = "black", fill = "white", stroke = 1.5, size = 3) +
+  annotate(geom = "text", x = 700, y = 0.24, label = paste0("r=", round(mantel$obs, digits = 3), ";  p=", mantel$pvalue), size = 5) +
+  xlab("Geographic distance [km]") +
+  ylab("Genetic distance [Fst/(1-Fst]") +
+  theme_cowplot()
+IBDplot
+```
+
+
+Plot IBD plots with all SNPs and neutral/no-inv SNPs for lrsc-pany and pany-maqu
+
+LRSC to PANY
+```{r, eval = F}
+dist.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_lrsc2pany.csv")
+dist.mat <- as.matrix(dist.mat[,2:7]) %>% as.dist()
+dist.mat <- as.matrix(dist.mat) %>% as.dist()
+
+neutfst.noinv.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/IBD/mme_pairwisefst_neutSNPs_noinv_matrix_lrsc2pany.csv")
+neutfst.noinv.mat <- as.matrix(neutfst.noinv.mat[,2:7])
+genetic_dist_noinv_lrsc2pany <- as.matrix(neutfst.noinv.mat/(1-neutfst.noinv.mat)) %>% as.dist()
+
+#Mantel test to test for IBD:
+mantel.noinv_lrsc2pany <- mantel.rtest(genetic_dist_noinv_lrsc2pany, dist.mat, nrepet = 9999)
+linear.noinv_lrsc2pany <- lm(genetic_dist_noinv_lrsc2pany~dist.mat)
+
+IBDplot.noinv_lrsc2pany <- ggplot(data=linear.noinv_lrsc2pany$model, mapping=aes(dist.mat, genetic_dist_noinv_lrsc2pany)) +
+  geom_smooth(method="lm", se = T, colour = "slategray") +
+  geom_point(shape = 21, colour = "black", fill = "white", stroke = 1.5, size = 3) +
+  annotate(geom = "text", x = 700, y = 0.03, label = paste0("r=", round(mantel.noinv_lrsc2pany$obs, digits = 3), ";  p=", mantel.noinv_lrsc2pany$pvalue), size = 5) +
+  xlab("Geographic distance [km]") +
+  ylab("Genetic distance [Fst/(1-Fst]") +
+  theme_cowplot()
+IBDplot.noinv_lrsc2pany
+
+allSNPsfst.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/IBD/mme_pairwisefst_allSNPs_matrix_lrsc2pany.csv")
+allSNPsfst.mat <- as.matrix(allSNPsfst.mat[,2:7])
+genetic_dist_allSNPs_lrsc2pany <- as.matrix(allSNPsfst.mat/(1-allSNPsfst.mat)) %>% as.dist()
+
+#Mantel test to test for IBD:
+mantel.allSNPs_lrsc2pany <- mantel.rtest(genetic_dist_allSNPs_lrsc2pany, dist.mat, nrepet = 9999)
+linear.allSNPs_lrsc2pany <- lm(genetic_dist_allSNPs_lrsc2pany~dist.mat)
+
+IBDplot.allSNPs_lrsc2pany <- ggplot(data=linear.allSNPs_lrsc2pany$model, mapping=aes(dist.mat, genetic_dist_allSNPs_lrsc2pany)) +
+  geom_smooth(method="lm", se = T, colour = "slategray") +
+  geom_point(shape = 21, colour = "black", fill = "white", stroke = 1.5, size = 3) +
+  annotate(geom = "text", x = 500, y = 0.1, label = paste0("r=", round(mantel.allSNPs_lrsc2pany$obs, digits = 3), ";  p=", mantel.allSNPs_lrsc2pany$pvalue), size = 5) +
+  xlab("Geographic distance [km]") +
+  ylab("Genetic distance [Fst/(1-Fst]") +
+  theme_cowplot()
+IBDplot.allSNPs_lrsc2pany
+```
+
+
+PANY 2 MAQU
+```{r, eval = F}
+dist.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_pany2maqu.csv")
+dist.mat <- as.matrix(dist.mat[,2:8]) %>% as.dist()
+dist.mat <- as.matrix(dist.mat) %>% as.dist()
+
+neutfst.noinv.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/IBD/mme_pairwisefst_neutSNPs_noinv_matrix_pany2maqu.csv")
+neutfst.noinv.mat <- as.matrix(neutfst.noinv.mat[,2:8])
+genetic_dist_noinv_pany2maqu <- as.matrix(neutfst.noinv.mat/(1-neutfst.noinv.mat)) %>% as.dist()
+
+#Mantel test to test for IBD:
+mantel.noinv_pany2maqu <- mantel.rtest(genetic_dist_noinv_pany2maqu, dist.mat, nrepet = 9999)
+linear.noinv_pany2maqu <- lm(genetic_dist_noinv_pany2maqu~dist.mat)
+
+IBDplot.noinv_pany2maqu <- ggplot(data=linear.noinv_pany2maqu$model, mapping=aes(dist.mat, genetic_dist_noinv_pany2maqu)) +
+  geom_smooth(method="lm", se = T, colour = "slategray") +
+  geom_point(shape = 21, colour = "black", fill = "white", stroke = 1.5, size = 3) +
+  annotate(geom = "text", x = 400, y = 0.15, label = paste0("r=", round(mantel.noinv_pany2maqu$obs, digits = 3), ";  p=", mantel.noinv_pany2maqu$pvalue), size = 5) +
+  xlab("Geographic distance [km]") +
+  ylab("Genetic distance [Fst/(1-Fst]") +
+  theme_cowplot()
+IBDplot.noinv_pany2maqu
+
+allSNPsfst.mat <- read_csv("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/IBD/mme_pairwisefst_allSNPs_matrix_pany2maqu.csv")
+allSNPsfst.mat <- as.matrix(allSNPsfst.mat[,2:8])
+genetic_dist_allSNPs_pany2maqu <- as.matrix(allSNPsfst.mat/(1-allSNPsfst.mat)) %>% as.dist()
+
+#Mantel test to test for IBD:
+mantel.allSNPs_pany2maqu <- mantel.rtest(genetic_dist_allSNPs_pany2maqu, dist.mat, nrepet = 9999)
+linear.allSNPs_pany2maqu <- lm(genetic_dist_allSNPs_pany2maqu~dist.mat)
+
+IBDplot.allSNPs_pany2maqu <- ggplot(data=linear.allSNPs_pany2maqu$model, mapping=aes(dist.mat, genetic_dist_allSNPs_pany2maqu)) +
+  geom_smooth(method="lm", se = T, colour = "slategray") +
+  geom_point(shape = 21, colour = "black", fill = "white", stroke = 1.5, size = 3) +
+  annotate(geom = "text", x = 500, y = 0.17, label = paste0("r=", round(mantel.allSNPs_pany2maqu$obs, digits = 3), ";  p=", mantel.allSNPs_pany2maqu$pvalue), size = 5) +
+  xlab("Geographic distance [km]") +
+  ylab("Genetic distance [Fst/(1-Fst]") +
+  theme_cowplot()
+IBDplot.allSNPs_pany2maqu
+```
+
+```{r, eval = F}
+IBD.north.south = (IBDplot.noinv_lrsc2pany | IBDplot.noinv_pany2maqu) / (IBDplot.allSNPs_lrsc2pany | IBDplot.allSNPs_pany2maqu)
+```
+
+
+
+
+
+
+
+## Estimate effective migration surfaces (Petkova et al. Nat Genet)
+
++ Estimate migration surfaces across the distribution using EEMS 
+
+Use the modified version for Fst-based dissimilarity matrix (https://github.com/dipetkov/eems)
+
++ Create Fst matrix from average pairwise-Fst values across all populations (all SNPs and neutral SNPs w/o inversions)
++ Polyline
++ sample coordinates
+
+Run EEMS with Fst matrix:
+```{bash, eval=F}
+nohup sh run_eems_fst_allSNPs.sh /workdir/arne/results/mme_popstructure/eems_res/silverside_eems_allSNPs.ini > silverside_eems_fst_allSNPs_nohup.log &
+
+nohup sh run_eems_fst_neutSNPs_noinv.sh /workdir/arne/results/mme_popstructure/eems_res/silverside_eems_neutSNPs_noinv.ini > silverside_eems_fst_neutSNPs_noinv_nohup.log &
+```
+
+Plot EEMS results:
+```{r, eval=F}
+install.packages(c("Rcpp","RcppEigen","raster","rgeos","sp"))
+setwd("/Users/arnejacobs/Downloads/eems-master/plotting/")
+if (file.exists("./rEEMSplots/")) {
+  install.packages("rEEMSplots", repos = NULL, type = "source")
+} else {
+  stop("Move to the directory that contains the rEEMSplots source to install the package.")
+}
+
+
+
+## Possibly change the working directory with setwd()
+## Part 2: Generate graphics
+library(rEEMSplots)
+library("rgdal")
+library("rworldmap")
+library("rworldxtra")
+
+setwd("/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/eems/")
+
+mcmcpath = "/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/eems/silverside_eems_allSNPs"
+plotpath = "/Users/arnejacobs/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/results/mme_popstructure/eems/silverside_eems_allSNPs"
+projection_none <- "+proj=longlat +datum=WGS84"
+projection_mercator <- "+proj=merc +datum=WGS84"
+
+eems.plots(mcmcpath, plotpath, longlat = TRUE
+           , out.png=FALSE, add.grid = TRUE, col.grid = "gray90",
+           ,add.demes = TRUE, remove.singletons = FALSE,
+           projection.in = projection_none,
+           projection.out = projection_mercator,
+           add.map = TRUE, 
+           col.map = "black"
+           ,lwd.map = 1)
+```
+
+
+
+
+
+
+
