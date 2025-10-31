@@ -1,0 +1,597 @@
+---
+title: 'silverside: phenotype & environment'
+author: "Arne Jacobs"
+output: github_document
+highlight: pygments
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+names(knitr::knit_engines$get())
+```
+
+# Plotting locations and phenotypic trait variation for M. menidia sample sites:
+
+Load R-packages:
+```{r, eval=F, include=F}
+#Plotting:
+library(tidyverse)
+library(ggfortify)
+library(RColorBrewer)
+library(wesanderson)
+library(cowplot)
+library(ggridges)
+library(reshape2)
+library(ggcorrplot)
+library(ggbiplot)
+library(patchwork)
+library(scales)
+
+#Maps
+library(ggmap)
+library(maps)
+library(mapdata)
+library(marmap)
+library(sdmpredictors) 
+library(leaflet) 
+```
+
+## Plot sampling locations:
+```{r, eval = FALSE}
+#Load the coordinates for the USA and Canada:
+canada <- map_data("world", region = "Canada")
+usa <- map_data("usa")
+pop <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords.csv")
+
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+
+#Map with sampling locations and blue-to-red color palette 
+pop$pop <- factor(pop$pop, levels = pop$pop)
+pop$pop <- ordered(pop$pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+
+ggplot() +
+  geom_polygon(data = canada, aes(x=long, y = lat, group = group), fill = "cornsilk", color="black") +
+  geom_polygon(data = usa, aes(x=long, y = lat, group = group), fill = "cornsilk", color="black") + 
+  geom_point(data = pop, aes(x=long, y = lat, fill = pop), size = 5, shape = 21, colour = "black") +
+  coord_fixed(xlim = c(-85, -60),  ylim = c(25, 52), ratio = 1.3) +
+  scale_fill_manual(values = mme.pal)+
+  xlab("Longitude") +
+  ylab("Latitude") +
+  theme(panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.background=element_rect(colour="white",fill="white", size=1),
+        legend.box.background=element_blank(),
+        legend.background=element_blank(),
+        legend.key = element_blank(),
+        axis.line=element_line(size = 0.5, colour = "black"),
+        axis.text=element_text(size=8, color = "black"),
+        axis.ticks = element_line(size = 0.5, colour = "black"),
+        axis.ticks.length=unit(2, "mm"))
+```
+
+
+## Geographic and environmental data:
+
+Calculate geographic distances between sampling locations using least-cost distances based on bathymetry data using the marmap R-package:
+```{r, eval=F}
+# Import bathymetry
+bat <- getNOAA.bathy(lon1=-90, lon2=-50, lat1=25, lat2=52, res = 10, keep = TRUE) #adjust map coordinates depending on samples
+blues <- c("lightsteelblue4", "lightsteelblue3", "lightsteelblue2", "lightsteelblue1")
+greys <- c(grey(0.6), grey(0.93), grey(0.99))
+
+# Load location of individuals (file with pop, longitude, latitude in decimal)
+loc <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords_marmap.csv")
+loc <- loc[,2:3]
+names(loc)[1] <- "x"
+names(loc)[2] <- "y"
+
+# Compute least cost paths between 0m and -126m. 
+tr <- trans.mat(bat, min.depth = 0, max.depth = -126)
+dist <- lc.dist(tr, loc, res = "dist")
+path <- lc.dist(tr, loc, res="path")
+MASS::write.matrix(dist,"dist.txt")
+
+# Plot map with isobaths every 1000m
+plot(bat, image = TRUE, land = TRUE, deep=-4000, shallow=-1000, step=1000, drawlabels = FALSE, bpal = list(c(min(bat,na.rm=TRUE), 0, blues), c(0, max(bat, na.rm=TRUE), greys)), lwd = 0.1)
+
+# Add -126m isobath
+plot(bat, deep = -126, shallow = -126, step = 0, lwd = 0.5, add = TRUE, drawlabels = TRUE)
+
+# Add least cost paths and the position of individuals
+dummy <- lapply(path, lines, col = col2alpha("orange", 0.5), lwd = 0.8, lty = 1) 
+points(loc, bg = "orange", cex = 0.8, pch = 21)
+```
+
+
+## Extraction and plotting of environmental variables for all 12 silverside populations. 
+```{r, eval=F}
+# Download environmental data layers (Max. Temperature, Min. Salinity and Min. Nitrates at the sea bottom) 
+environment.data <- load_layers( layercodes = c("BO2_dissoxmean_bdmean" , "BO2_dissoxmax_bdmean", "BO2_dissoxmin_bdmean"
+                                                  , "BO2_tempmean_bdmean", "BO2_tempmax_bdmean", "BO2_tempmin_bdmean"
+                                                  , "BO2_salinitymean_bdmean", "BO2_salinitymax_bdmean", "BO2_salinitymin_bdmean"
+                                                  , "BO2_tempmean_ss", "BO2_tempmax_ss", "BO2_tempmin_ss", "BO2_temprange_ss"
+                                                  , "BO2_dissoxmean_ss", "BO2_dissoxmax_ss", "BO2_dissoxmin_ss"
+                                                  , "BO2_salinitymean_ss", "BO2_salinitymax_ss", "BO2_salinitymin_ss", "BO_ph") ,equalarea=FALSE, rasterstack=TRUE) 
+
+
+# Crop raster to fit the North Atlantic 
+ne.atlantic.ext <- extent(-85, -50, 24, 52) 
+env.var.crop <- crop(environment.data, ne.atlantic.ext) 
+dim(env.var.crop)
+names(env.var.crop)
+
+
+# Generate a nice color ramp and plot the map 
+my.colors = colorRampPalette(c("#5E85B8","#EDF0C0","#C13127")) 
+plot(env.var.crop,col=my.colors(1000),axes=F, box=F) 
+title(cex.sub = 1.25, sub = "Temperature range at sea surface (ºC)") 
+
+# List layers avaialble in Bio-ORACLE v2 
+layers.bio2 <- list_layers( datasets="Bio-ORACLE" ) 
+layers.bio2
+write_csv(layers.bio2, "Bio-ORACLEv2_datalayer_summary.csv",col_names = T, quote_escape = F)
+
+#Correlation between data layers
+corr <- layers_correlation(c("BO2_dissoxmean_bdmean" , "BO2_dissoxmax_bdmean", "BO2_dissoxmin_bdmean"
+                                                  , "BO2_tempmean_bdmean", "BO2_tempmax_bdmean", "BO2_tempmin_bdmean"
+                                                  , "BO2_salinitymean_bdmean", "BO2_salinitymax_bdmean", "BO2_salinitymin_bdmean"
+                                                  , "BO2_tempmean_ss", "BO2_tempmax_ss", "BO2_tempmin_ss", "BO2_temprange_ss"
+                                                  , "BO2_dissoxmean_ss", "BO2_dissoxmax_ss", "BO2_dissoxmin_ss"
+                                                  , "BO2_salinitymean_ss", "BO2_salinitymax_ss", "BO2_salinitymin_ss", "BO_ph"))
+
+
+#Plot correlation matrix:
+ggcorrplot(corr, hc.order = TRUE, outline.col = "white",ggtheme = ggplot2::theme_gray,
+   colors = c("#6D9EC1", "white", "#E46726"))
+
+# Generate a data.frame with the sites of interest 
+mme.sites <- read_csv(file = "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/silverside_popsamples_coords_marmap.csv")
+mme.sites
+
+# Visualise sites of interest in google maps 
+m <- leaflet() 
+m <- addTiles(m) 
+m <- addMarkers(m, lng=mme.sites$long, lat=mme.sites$lat, popup=mme.sites$pop) 
+m 
+
+# Extract environmental values from layers 
+mme.sites.environment <- data.frame(Name=mme.sites$pop, extract(environment.data,mme.sites[,2:3]) ) 
+mme.sites.environment
+mme.sites.env.coord <- cbind(mme.sites,mme.sites.environment)
+write_csv(mme.sites.env.coord, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle.csv", col_names = T, quote_escape = F)
+
+```
+
+#Load complete environmental database (including variables from Hannes Baumann)
+```{r, eval=F}
+Mme.envdata <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata.csv")
+#Add distance
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+names(dist)[1] = "pop"
+Mme.envdata.dist = left_join(Mme.envdata, dist, by="pop")
+
+#Calculate correlation matrix for full dataset
+corr <- round(cor(Mme.envdata[,5:30]), 1)
+corr.df <- as.data.frame(corr)
+write_csv(corr.df, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata_corrmatrix.csv", col_names = T, quote_escape = F)
+
+p.mat <- cor_pmat(Mme.envdata[,5:30])
+pmat.df <- as.data.frame(p.mat)
+write_csv(pmat.df, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata_corrmatrix_pvalues.csv", col_names = T, quote_escape = F)
+
+ggcorrplot(corr, hc.order = TRUE, outline.col = "white",ggtheme = ggplot2::theme_gray,
+   colors = c("#6D9EC1", "white", "#E46726"))
+```
+
+
+Summarise environmental variables in PCA:
+```{r, eval=F}
+Mme.envdata <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata.csv")
+
+pca.env <- prcomp(Mme.envdata[,5:30], scale. = T)
+
+screeplot(pca.env, npcs = min(length(pca.env$sdev)),type ="lines")
+
+biplot(pca.env)
+
+ggbiplot(pca.env, ellipse = TRUE, circle = TRUE, var.scale = 1, obs.scale = 1)
+
+pca.env.rot = pca.env$rotation
+pca.env.pcs = pca.env$x
+pca.env.pcs = as_tibble(cbind(pca.env.pcs,Mme.envdata[,1:4]))
+
+pca.lat = ggplot(data = pca.env.pcs, aes(x=PC1, y=PC2, colour = lat)) +
+  geom_point(size = 5) +
+  scale_color_viridis_c() +
+  xlab("PC1 [88.1%]") +
+  ylab("PC2 [7.8%]")
+
+pca.env.pcs$pop <- ordered(pca.env.pcs$pop, levels = c("JIGA", "LRSC", "MCNC", "OINC", "CTVA", "PANY", "MCCT", "DXMA", "MDME", "MBNS", "HXNS", "MAQU"))
+mme.pal <- c("#4f000b","#9e2a2b","#CE4257","darkorange2", "#ff9b54","#FFC100", "#edd746","#2a9d8f","#0f85a0","#05668D","#98C1d9", "#3d5a80") 
+pca.pop = ggplot(data = pca.env.pcs, aes(x=PC1, y=PC2, colour = pop, fill = pop)) +
+  geom_point(size = 5, shape = 21) +
+  scale_fill_manual(values = mme.pal) +
+  scale_colour_manual(values = mme.pal) +
+  xlab("PC1 [88.1%]") +
+  ylab("PC2 [7.8%]")
+
+pca.comb = pca.lat | pca.pop
+
+write_csv(pca.env.pcs, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata_PCAscores.csv", col_names = T, quote_escape = F)
+
+library(factoextra)
+fviz_eig(pca.env)
+fviz_pca_ind(pca.env,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+fviz_pca_var(pca.env,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+fviz_pca_biplot(pca.env, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+
+res.var <- get_pca_var(pca.env)
+res.var$coord          # Coordinates
+res.var$contrib        # Contributions to the PCs
+res.var$cos2           # Quality of representation 
+
+loadings.var = as_tibble(res.var$contrib)
+write.csv(loadings.var, "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata_PCAloadings.csv")
+```
+
+Plot latitudinal changes in environmental variables
+```{r, eval=F}
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=lt_meanSST), method = "loess", span=0.5, colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=lt_max_SST), method = "loess", span=0.5, colour = "gray20") +
+  geom_smooth(aes(x=Dist, y=lt_minSST), method = "loess", span=0.5, colour = "gray70")
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=seasonality_degC), method = "loess", span=0.5, colour = "gray70") +
+  geom_smooth(aes(x=Dist, y=BO2_temprange_ss), method = "loess", span=0.5, colour = "gray20")
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=n.weeks.above12_meanSST, method = "loess", span=0.5), colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=n.weeks.above12_minSST, method = "loess", span=0.5), colour = "gray20") 
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=BO2_tempmean_ss, method = "loess", span=0.5), colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=BO2_temprange_ss, method = "loess", span=0.5), colour = "gray20")
+
+ggplot(data = Mme.envdata.dist) +
+  geom_smooth(aes(x=Dist, y=BO2_tempmean_ss, method = "loess", span=0.5), colour = "gray50") +
+  geom_smooth(aes(x=Dist, y=BO2_tempmin_ss, method = "loess", span=0.5), colour = "gray20") +
+  geom_smooth(aes(x=Dist, y=BO2_tempmax_ss, method = "loess", span=0.5), colour = "gray70")
+
+
+pca.env.pcs = read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/Mme_cline_environmental_variables_BioOracle_addHBdata_PCAscores.csv")
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+names(dist)[1] = "pop"
+pca.env.pcs.dist = left_join(pca.env.pcs, dist, by="pop")
+pca.env.pcs.dist$Dist = pca.env.pcs.dist$Dist + 1
+
+ggplot(data = pca.env.pcs.dist) +
+  geom_point(aes(x=Dist, y=-PC1), colour = "firebrick") +
+  geom_point(aes(x=Dist, y=PC2), colour = "steelblue") + 
+  geom_smooth(aes(x=Dist, y=-PC1), method = "loess", span=0.5, colour = "firebrick") + 
+  geom_smooth(aes(x=Dist, y=PC2), method = "loess", span=0.5, colour = "steelblue") +
+  ylab("Environment PC") + 
+  xlab("Geographic distance from JIGA [km]")
+```
+
+
+
+
+## Phenotypic data:
+Calculate the mean for population trait data: Number of vertebral (vn), proportion of temperature-dependent sex determination (tsd), and growth rates at 15ºC (gr15) and 28ºC (gr28) and plotting means and standard deviations (across replicates) along latitude. Raw data from Hice et al. 2012 Ecol. Letters. 
+```{r, eval = FALSE}
+#Set directory containing files:
+setwd(dir = "~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/")
+
+#Load the raw data for each trait:
+
+vn.raw <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/files/mme_cline_nvert_data.csv")
+tsd.raw <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/files/mme_cline_tsd_data.csv")
+gr15.raw <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/files/mme_cline_gr15_data.csv")
+gr28.raw <- read.csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/files/mme_cline_gr28_data.csv")
+
+# Calculate mean and standard deviation (sd) for each pop:
+
+vn.mean <- vn.raw %>%
+  dplyr::group_by(pop,lat) %>%
+  dplyr::summarise(mean = mean(n.vertebral), sd = sd(n.vertebral))
+
+tsd.mean <- tsd.raw %>%
+  dplyr::group_by(pop,lat) %>%
+  dplyr::summarise(mean = mean(tsd), sd = sd(tsd))
+
+gr15.mean <- gr15.raw %>%
+  dplyr::group_by(pop,lat) %>%
+  dplyr::summarise(mean = mean(gr.mean), sd = sd(gr.mean))
+
+gr28.mean <- gr28.raw %>% 
+  dplyr::group_by(pop,lat) %>%
+  dplyr::summarise(mean = mean(gr.mean), sd = sd(gr.mean))
+
+mme.traits.1 <- merge(vn.mean, tsd.mean, by = "pop", all = T)
+mme.gr <- merge(gr15.mean, gr28.mean, by = "pop", all = T)
+mme.traits <- merge(mme.traits.1, mme.gr, by = "pop", all = T)
+
+mme.traits <- dplyr::rename(mme.traits, lat= lat.x.x, vn.mean = mean.x.x, vn.sd=sd.x.x, tsd.mean=mean.y.x,tsd.sd=sd.y.x,gr15.mean=mean.x.y, gr15.sd=sd.x.y, gr28.mean=mean.y.y, gr28.sd=sd.y.y)
+mme.traits <- select(mme.traits, pop, lat, vn.mean, vn.sd, tsd.mean, tsd.sd, gr15.mean, gr15.sd, gr28.mean, gr28.sd)
+
+mme.traits <- arrange(mme.traits, lat)
+write_csv(mme.traits, "mme_mean_traitvalues_hice2012.csv", col_names = T, quote_escape = F)
+
+#Map with sampling locations and blue-to-red color palette 
+mme.traits <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/Mme_mean_traitvalues_hice2012.csv")
+mme.traits$pop <- factor(mme.traits$pop, levels = mme.traits$pop)
+
+VN.plot <- ggplot(data = mme.traits) +
+  geom_smooth(aes(x=lat, y = vn.mean), method = "loess", colour = "gray20", se = T) +
+  geom_errorbar(aes(x=lat, ymax = vn.mean + vn.sd, ymin = vn.mean - vn.sd, width=0.25), colour = "black") +
+  geom_point(aes(x=lat, y = vn.mean, fill = pop), size = 5, shape = 21, colour = "black") +
+  scale_fill_manual(values = c(brewer.pal(n = 11, name = "RdBu")))+
+  xlab("Latitude") +
+  ylab("Mean vertebral number") +
+  theme(panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.background=element_rect(colour="white",fill="white", size=1),
+        legend.box.background=element_blank(),
+        legend.background=element_blank(),
+        legend.key = element_blank(),
+        axis.line=element_line(size = 0.5, colour = "black"),
+        axis.text=element_text(size=8, color = "black"),
+        axis.ticks = element_line(size = 0.5, colour = "black"),
+        axis.ticks.length=unit(2, "mm"))
+#ggsave("Silversides_vertnumber_clinal_plot.pdf", width=7, height=3)
+
+TSD.plot <- ggplot(data = mme.traits) +
+  geom_smooth(aes(x=lat, y = tsd.mean), method = "loess", colour = "gray20", se = T) +
+  geom_errorbar(aes(x=lat, ymax = tsd.mean + tsd.sd, ymin = tsd.mean - tsd.sd, width=0.25), colour = "black") +
+  geom_point(aes(x=lat, y = tsd.mean, fill = pop), size = 5, shape = 21, colour = "black") +
+  scale_fill_manual(values = c(brewer.pal(n = 11, name = "RdBu")))+
+  xlab("Latitude") +
+  ylab("TSD") +
+  theme(panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.background=element_rect(colour="white",fill="white", size=1),
+        legend.box.background=element_blank(),
+        legend.background=element_blank(),
+        legend.key = element_blank(),
+        axis.line=element_line(size = 0.5, colour = "black"),
+        axis.text=element_text(size=8, color = "black"),
+        axis.ticks = element_line(size = 0.5, colour = "black"),
+        axis.ticks.length=unit(2, "mm"))
+#ggsave("Silversides_tsd_clinal_plot.pdf", width=7, height=3)
+
+GR15.plot <- ggplot(data = mme.traits) +
+  geom_smooth(aes(x=lat, y = gr15.mean), method = "loess", colour = "gray20", se = T) +
+  geom_errorbar(aes(x=lat, ymax = gr15.mean + gr15.sd, ymin = gr15.mean - gr15.sd, width=0.25), colour = "black") +
+  geom_point(aes(x=lat, y = gr15.mean, fill = pop), size = 5, shape = 21, colour = "black") +
+  scale_fill_manual(values = c(brewer.pal(n = 11, name = "RdBu")))+
+  xlab("Latitude") +
+  ylab("Growth rate at 15ºC") +
+  theme(panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.background=element_rect(colour="white",fill="white", size=1),
+        legend.box.background=element_blank(),
+        legend.background=element_blank(),
+        legend.key = element_blank(),
+        axis.line=element_line(size = 0.5, colour = "black"),
+        axis.text=element_text(size=8, color = "black"),
+        axis.ticks = element_line(size = 0.5, colour = "black"),
+        axis.ticks.length=unit(2, "mm"))
+#ggsave("Silversides_gr15_clinal_plot.pdf", width=7, height=3)
+
+GR28.plot <- ggplot(data = mme.traits) +
+  geom_smooth(aes(x=lat, y = gr28.mean), method = "loess", colour = "gray20", se = T) +
+  geom_errorbar(aes(x=lat, ymax = gr28.mean + gr28.sd, ymin = gr28.mean - gr28.sd, width=0.25), colour = "black") +
+  geom_point(aes(x=lat, y = gr28.mean, fill = pop), size = 5, shape = 21, colour = "black") +
+  scale_fill_manual(values = c(brewer.pal(n = 11, name = "RdBu")))+
+  xlab("Latitude") +
+  ylab("Growth rate at 28ºC") +
+  theme(panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.background=element_rect(colour="white",fill="white", size=1),
+        legend.box.background=element_blank(),
+        legend.background=element_blank(),
+        legend.key = element_blank(),
+        axis.line=element_line(size = 0.5, colour = "black"),
+        axis.text=element_text(size=8, color = "black"),
+        axis.ticks = element_line(size = 0.5, colour = "black"),
+        axis.ticks.length=unit(2, "mm"))
+#ggsave("Silversides_gr28_clinal_plot.pdf", width=7, height=3)
+
+Mme.trait.plots <- plot_grid(VN.plot, TSD.plot, GR15.plot, GR28.plot, labels = c("A", "B", "C", "D"), ncol = 2)
+Mme.trait.plots
+
+#save_plot("Mme_trait_clines.pdf", Mme.trait.plots, ncol = 2,nrow = 2,base_aspect_ratio = 1.5)
+```
+
+Vertebral count cline
+```{r, eval = FALSE}
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+names(dist)[1] = "pop"
+vn.dist = left_join(vn.raw, dist, by="pop")
+vn.dist$Dist = vn.dist$Dist + 1
+vn.dist = filter(vn.dist, pop != "HXNS", pop != "MAQU")
+plot(vn.dist$Dist, vn.dist$n.vertebral)
+
+ggplot() +
+  geom_point(data = vn.dist, aes(x=Dist, y=n.vertebral), shape = 21, size=4, stroke=1, colour="grey10") +
+  geom_smooth(data = vn.dist, aes(x=Dist, y=n.vertebral), method="loess", span=2, colour="grey10") +
+  theme_cowplot()
+
+#rescale
+vn.dist$vn.scaled = rescale(vn.dist$n.vertebral, to=c(0,1))
+vn.scaled.plot = ggplot() +
+  geom_point(data = vn.dist, aes(x=Dist, y=vn.scaled), shape = 21, size=4, stroke=1, colour="grey10") +
+  geom_smooth(data = vn.dist, aes(x=Dist, y=vn.scaled), method="loess", span=2, colour="grey10") +
+  theme_cowplot()
+```
+
+growth rate clines
+```{r, eval = FALSE}
+dist <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/geographic_environmental_data/leastcost_geographic_geodist_fromJIGA.csv")
+names(dist)[1] = "pop"
+gr15.dist = left_join(gr15.raw, dist, by="pop")
+gr15.dist$Dist = gr15.dist$Dist + 1
+gr15.dist = filter(gr15.dist, pop != "HXNS", pop != "MAQU")
+gr15.dist.mean <- gr15.dist %>%
+  dplyr::group_by(pop,Dist) %>%
+  dplyr::summarise(mean = mean(gr.mean), sd = sd(gr.mean))
+plot(gr15.dist.mean$Dist, gr15.dist.mean$mean)
+
+gr28.dist = left_join(gr28.raw, dist, by="pop")
+gr28.dist$Dist = gr28.dist$Dist + 1
+gr28.dist = filter(gr28.dist, pop != "HXNS", pop != "MAQU")
+gr28.mean <- gr28.dist %>% 
+  dplyr::group_by(pop,Dist) %>%
+  dplyr::summarise(mean = mean(gr.mean), sd = sd(gr.mean))
+plot(gr28.mean$Dist, gr28.mean$mean)
+
+ggplot() +
+  geom_point(data = gr28.mean, aes(x=Dist, y=mean), shape = 21, size=4, stroke=1, colour="firebrick") +
+  geom_smooth(data = gr28.mean, aes(x=Dist, y=mean), method="loess", span=2, colour="firebrick") +
+  geom_point(data = gr15.dist.mean, aes(x=Dist, y=mean), shape = 21, size=4, stroke=1, colour="steelblue") +
+  geom_smooth(data = gr15.dist.mean, aes(x=Dist, y=mean), method="loess", span=2, colour="steelblue") +
+  theme_cowplot()
+
+#rescale
+gr28.mean$gr28.mean.scaled = rescale(gr28.mean$mean, to=c(0,1))
+gr15.dist.mean$gr15.mean.scaled = rescale(gr15.dist.mean$mean, to=c(0,1))
+
+gr.plot = ggplot() +
+  geom_point(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), shape = 21, size=4, stroke=1, colour="firebrick") +
+  geom_smooth(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), method="loess", span=2, colour="firebrick", fill="firebrick") +
+  geom_point(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), shape = 21, size=4, stroke=1, colour="steelblue") +
+  geom_smooth(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), method="loess", span=2, colour="steelblue", fill="steelblue") +
+  theme_cowplot()
+```
+
+
+```{r, eval = FALSE}
+phen.plot = gr.plot = ggplot() +
+  geom_point(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), shape = 21, size=4, stroke=1, colour="firebrick") +
+  geom_smooth(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), method="loess", span=2, colour="firebrick", fill="firebrick") +
+  geom_point(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), shape = 21, size=4, stroke=1, colour="steelblue") +
+  geom_smooth(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), method="loess", span=2, colour="steelblue", fill="steelblue") +
+  geom_point(data = vn.dist, aes(x=Dist, y=vn.scaled), shape = 21, size=4, stroke=1, colour="grey10") +
+  geom_smooth(data = vn.dist, aes(x=Dist, y=vn.scaled), method="loess", span=2, colour="grey10") +
+  theme_cowplot()
+
+phen.plot2 = gr.plot = ggplot() +
+  geom_point(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), shape = 21, size=4, stroke=1, colour="firebrick") +
+  geom_smooth(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), method="loess", span=1, colour="firebrick", se=F) +
+  geom_point(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), shape = 21, size=4, stroke=1, colour="steelblue") +
+  geom_smooth(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), method="loess", span=1, colour="steelblue", se=F) +
+  geom_point(data = vn.dist, aes(x=Dist, y=vn.scaled), shape = 21, size=4, stroke=1, colour="grey10") +
+  geom_smooth(data = vn.dist, aes(x=Dist, y=vn.scaled), method="loess", span=1, colour="grey10", se=F) +
+  theme_cowplot() +
+  ylab("scaled phenotypic value")
+
+phen.plot3 = gr.plot = ggplot() +
+  geom_point(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), shape = 21, size=4, stroke=1, colour="firebrick") +
+  geom_smooth(data = gr28.mean, aes(x=Dist, y=gr28.mean.scaled), method="loess", span=0.5, colour="firebrick", se=F) +
+  geom_point(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), shape = 21, size=4, stroke=1, colour="steelblue") +
+  geom_smooth(data = gr15.dist.mean, aes(x=Dist, y=gr15.mean.scaled), method="loess", span=0.5, colour="steelblue", se=F) +
+  geom_point(data = vn.dist, aes(x=Dist, y=vn.scaled), shape = 21, size=4, stroke=1, colour="grey10") +
+  geom_smooth(data = vn.dist, aes(x=Dist, y=vn.scaled), method="loess", span=0.5, colour="grey10", se=F) +
+  theme_cowplot() +
+  ylab("scaled phenotypic value")
+```
+
+
+
+
+
+## Examine phenotypic data (body size [std_length; total_length] and vertebral number for all sequenced individuals):
+
+* Differences between populations/latitudes
+* Differences between sexes
+* Correlation with sig. PCAs (1-5)
+
+```{r, eval = FALSE}
+phen.data <- read_csv("~/Library/CloudStorage/Dropbox/Cornell_Postdoc/analysis/phenotype_data/Silverside_Wild_PhenotypicTraits_sequenced.csv")
+
+#Standard Length
+#Latitude
+ggplot(data = phen.data, aes(x=Lat, y=Length_std, colour = Sex)) +
+  geom_point() + geom_smooth(method="loess")
+
+ggplot(data = phen.data, aes(x=as.factor(Lat), y=Length_std, colour = Sex)) +
+  geom_boxplot()
+
+#Sex
+ggplot(data = phen.data, aes(x=Sex, y=Length_std, colour = Sex)) +
+  geom_violin() + geom_boxplot(width=0.1)
+
+#Correlation with PCAs
+ggplot(data = phen.data, aes(x=PC5, y=Length_std)) +
+  geom_point() + geom_smooth(method="loess")
+
+
+
+
+#Total Length
+#Latitude
+ggplot(data = phen.data, aes(x=Lat, y=Length_total, colour = Sex)) +
+  geom_point() + geom_smooth(method="loess")
+
+ggplot(data = phen.data, aes(x=as.factor(Lat), y=Length_total, colour = Sex)) +
+  geom_boxplot()
+
+#Sex
+ggplot(data = phen.data, aes(x=Sex, y=Length_total, colour = Sex)) +
+  geom_violin() + geom_boxplot(width=0.1)
+
+#Correlation with PCAs
+ggplot(data = phen.data, aes(x=PC3, y=Length_total)) +
+  geom_point() + geom_smooth(method="loess")
+
+
+#Vertebral number
+#Latitude
+ggplot(data = phen.data, aes(x=Lat, y=Vertebtral_count, colour = Sex)) +
+  geom_point() + geom_smooth(method="loess")
+
+ggplot(data = phen.data, aes(x=as.factor(Lat), y=Vertebtral_count, colour = Sex)) +
+  geom_boxplot()
+
+#Sex
+ggplot(data = phen.data, aes(x=Sex, y=Vertebtral_count, colour = Sex)) +
+  geom_violin() + geom_boxplot(width=0.1)
+
+#Correlation with PCAs
+ggplot(data = phen.data, aes(x=PC1, y=Vertebtral_count)) +
+  geom_point() + geom_smooth(method="loess")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
